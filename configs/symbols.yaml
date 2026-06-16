@@ -1,0 +1,46 @@
+symbols:
+  - AUDCAD
+  - AUDUSD
+  - AUDCHF
+  - AUDJPY
+  - AUDNZD
+  - CADCHF
+  - CADJPY
+  - CHFJPY
+  - EURUSD
+  - EURAUD
+  - EURCAD
+  - EURCHF
+  - EURGBP
+  - EURJPY
+  - EURNZD
+  - GBPAUD
+  - GBPUSD
+  - GBPCHF
+  - GBPJPY
+  - GBPCAD
+  - GBPNZD
+  - NZDCAD
+  - NZDCHF
+  - NZDJPY
+  - NZDUSD
+  - USDCAD
+  - USDCHF
+  - USDJPY
+  - XAGUSD
+  - XPDUSD
+  - XAUUSD
+
+timeframes:
+  - M5
+  - M15
+  - H1
+  - H4
+  - D1
+
+point_values:
+  default: 0.00001
+  JPY: 0.001
+  XAUUSD: 0.01
+  XAGUSD: 0.001
+  XPDUSD: 0.01

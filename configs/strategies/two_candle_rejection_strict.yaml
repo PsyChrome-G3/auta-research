@@ -1,0 +1,61 @@
+name: two_candle_rejection_strict
+description: Strict two candle wick rejection with engulfing required.
+
+pattern:
+  wick_ratio_min: 2.5
+  body_ratio_min: 2.0
+  require_body_engulf: true
+  require_second_candle_wick_bias: true
+  min_body_to_range_ratio: 0.05
+  max_body_to_range_ratio_for_flat: 0.15
+  allow_candle1_colours:
+    buy: ["bearish"]
+    sell: ["bullish"]
+  require_candle2_colour:
+    buy: "bullish"
+    sell: "bearish"
+
+entry:
+  modes: ["next_open", "signal_close", "break_signal_extreme"]
+  break_expiry_bars: 5
+
+stop:
+  modes: ["pattern_extreme", "candle2_extreme", "atr_buffered_pattern_extreme"]
+  atr_period: 14
+  atr_buffer_values: [0.0, 0.1, 0.2]
+
+take_profit:
+  r_values: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
+
+costs:
+  spread_mode: "from_data"
+  fixed_spread_points: 0
+  slippage_points: 0
+  commission_per_lot: 0
+
+filters:
+  trend:
+    enabled: false
+    modes: ["none", "ema_200", "ema_stack", "price_vs_ema_200"]
+  volatility:
+    enabled: false
+    min_atr_percentile: 20
+    max_atr_percentile: 90
+    atr_period: 14
+    percentile_lookback: 100
+  session:
+    enabled: false
+    allowed_sessions: ["london", "new_york"]
+  location:
+    enabled: false
+    require_near_recent_swing: false
+    swing_lookback: 20
+    max_distance_atr: 0.5
+  pullback:
+    enabled: false
+    ema_periods: [20, 50]
+    max_distance_atr: 0.5
+
+backtest:
+  max_bars_to_hold: 100
+  ambiguous_bar_handling: "conservative"
