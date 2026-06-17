@@ -118,9 +118,9 @@ class OptimisationGridConfig(BaseModel):
             "sell": [["bullish", "flat"]],
         }
     )
-    entry_modes: list[list[str]] = Field(default_factory=lambda: [["next_open"]])
-    stop_modes: list[list[str]] = Field(default_factory=lambda: [["pattern_extreme"]])
-    tp_r_values: list[list[float]] = Field(default_factory=lambda: [[1.0]])
+    entry_modes: list[str] = Field(default_factory=lambda: ["next_open"])
+    stop_modes: list[str] = Field(default_factory=lambda: ["pattern_extreme"])
+    tp_r_values: list[float] = Field(default_factory=lambda: [1.0])
     atr_buffer_values: list[float] = Field(default_factory=lambda: [0.0])
     trend_filters: list[str] = Field(default_factory=lambda: ["none"])
     volatility_filters: list[bool] = Field(default_factory=lambda: [False])
@@ -130,6 +130,8 @@ class OptimisationGridConfig(BaseModel):
 class OptimisationConfig(BaseModel):
     max_variants: int = 500
     min_trades_for_ranking: int = 30
+    timeframes: list[str] | None = None
+    save_every: int = 25
     grid: OptimisationGridConfig = Field(default_factory=OptimisationGridConfig)
 
 
@@ -181,6 +183,55 @@ class SymbolsConfig(BaseModel):
     point_values: dict[str, float] = Field(default_factory=dict)
 
 
+class PropAccountConfig(BaseModel):
+    starting_balance: float = 100_000.0
+    profit_target_pct: float = 8.0
+    max_total_loss_pct: float = 6.0
+    max_daily_loss_pct: float = 3.0
+    min_trading_days: int = 0
+    max_trading_days: int | None = None
+
+
+class PropRiskConfig(BaseModel):
+    risk_per_trade_pct_values: list[float] = Field(
+        default_factory=lambda: [0.1, 0.25, 0.5, 0.75, 1.0]
+    )
+    max_open_trades: int = 1
+    max_trades_per_day: int = 3
+    stop_after_daily_loss_pct: float = 2.0
+    stop_after_consecutive_losses: int = 3
+    compound: bool = False
+
+
+class PropExecutionConfig(BaseModel):
+    use_trade_log_r_results: bool = True
+    include_spread_slippage: bool = True
+
+
+class PropMonteCarloConfig(BaseModel):
+    enabled: bool = True
+    runs: int = 1000
+    shuffle_trades: bool = True
+    bootstrap_with_replacement: bool = True
+
+
+class PropVerdictConfig(BaseModel):
+    min_mc_pass_rate: float = 0.55
+    max_total_fail_rate: float = 0.25
+    max_daily_fail_rate: float = 0.35
+    min_oos_expectancy_r: float = 0.0
+
+
+class PropFirmConfig(BaseModel):
+    name: str = "prop_firm_default"
+    description: str = ""
+    account: PropAccountConfig = Field(default_factory=PropAccountConfig)
+    risk: PropRiskConfig = Field(default_factory=PropRiskConfig)
+    execution: PropExecutionConfig = Field(default_factory=PropExecutionConfig)
+    monte_carlo: PropMonteCarloConfig = Field(default_factory=PropMonteCarloConfig)
+    verdict: PropVerdictConfig = Field(default_factory=PropVerdictConfig)
+
+
 def load_yaml(path: str | Path) -> dict[str, Any]:
     """Load a YAML file and return a dict."""
     with open(path, encoding="utf-8") as f:
@@ -218,6 +269,13 @@ def load_research_config(path: str | Path, base: Path | None = None) -> Research
     resolved = resolve_path(path, base)
     data = load_yaml(resolved)
     return ResearchConfig.model_validate(data)
+
+
+def load_prop_firm_config(path: str | Path, base: Path | None = None) -> PropFirmConfig:
+    """Load and validate prop firm simulator YAML config."""
+    resolved = resolve_path(path, base)
+    data = load_yaml(resolved)
+    return PropFirmConfig.model_validate(data)
 
 
 def load_symbols_config(path: str | Path, base: Path | None = None) -> SymbolsConfig:

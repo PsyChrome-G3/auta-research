@@ -1,0 +1,34 @@
+name: prop_firm_default
+description: Funded-account style evaluation simulator for AUTA research.
+
+account:
+  starting_balance: 100000
+  profit_target_pct: 8.0
+  max_total_loss_pct: 6.0
+  max_daily_loss_pct: 3.0
+  min_trading_days: 0
+  max_trading_days: null
+
+risk:
+  risk_per_trade_pct_values: [0.1, 0.25, 0.5, 0.75, 1.0]
+  max_open_trades: 1
+  max_trades_per_day: 3
+  stop_after_daily_loss_pct: 2.0
+  stop_after_consecutive_losses: 3
+  compound: false
+
+execution:
+  use_trade_log_r_results: true
+  include_spread_slippage: true
+
+monte_carlo:
+  enabled: true
+  runs: 1000
+  shuffle_trades: true
+  bootstrap_with_replacement: true
+
+verdict:
+  min_mc_pass_rate: 0.55
+  max_total_fail_rate: 0.25
+  max_daily_fail_rate: 0.35
+  min_oos_expectancy_r: 0.0
