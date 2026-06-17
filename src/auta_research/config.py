@@ -192,15 +192,88 @@ class PropAccountConfig(BaseModel):
     max_trading_days: int | None = None
 
 
+class PropPhaseConfig(BaseModel):
+    """One phase in a multi-step prop programme (e.g. The5ers Bootcamp step)."""
+
+    name: str
+    starting_balance: float
+    profit_target_pct: float
+    max_total_loss_pct: float
+    max_daily_loss_pct: float | None = None
+    daily_pause_pct: float | None = None
+    time_limit_days: int | None = None
+    min_trading_days: int = 0
+
+
+class PropProgramConfig(BaseModel):
+    name: str = "prop_firm_default"
+    type: str = "single_challenge"
+    currency: str = "USD"
+    leverage: str | None = None
+    include_funded_phase: bool = True
+
+
 class PropRiskConfig(BaseModel):
     risk_per_trade_pct_values: list[float] = Field(
         default_factory=lambda: [0.1, 0.25, 0.5, 0.75, 1.0]
     )
     max_open_trades: int = 1
+    max_open_trades_values: list[int] | None = None
     max_trades_per_day: int = 3
+    max_trades_per_day_values: list[int] | None = None
     stop_after_daily_loss_pct: float = 2.0
+    stop_after_daily_loss_pct_values: list[float] | None = None
     stop_after_consecutive_losses: int = 3
+    stop_after_consecutive_losses_values: list[int] | None = None
     compound: bool = False
+
+    def iter_risk_settings(self, *, full_grid: bool = False) -> list[dict[str, float | int]]:
+        """Risk parameter combinations. full_grid=True expands all _values lists (sensitivity)."""
+        if full_grid and (
+            self.max_open_trades_values
+            or self.max_trades_per_day_values
+            or self.stop_after_daily_loss_pct_values
+            or self.stop_after_consecutive_losses_values
+        ):
+            return self._full_risk_grid()
+        open_v = (self.max_open_trades_values or [self.max_open_trades])[0]
+        day_v = (self.max_trades_per_day_values or [self.max_trades_per_day])[0]
+        stop_d = (self.stop_after_daily_loss_pct_values or [self.stop_after_daily_loss_pct])[0]
+        stop_c = (self.stop_after_consecutive_losses_values or [self.stop_after_consecutive_losses])[0]
+        return [
+            {
+                "risk_per_trade_pct": float(rp),
+                "max_open_trades": int(open_v),
+                "max_trades_per_day": int(day_v),
+                "stop_after_daily_loss_pct": float(stop_d),
+                "stop_after_consecutive_losses": int(stop_c),
+            }
+            for rp in self.risk_per_trade_pct_values
+        ]
+
+    def _full_risk_grid(self) -> list[dict[str, float | int]]:
+        import itertools
+
+        open_vals = self.max_open_trades_values or [self.max_open_trades]
+        day_vals = self.max_trades_per_day_values or [self.max_trades_per_day]
+        stop_daily_vals = self.stop_after_daily_loss_pct_values or [self.stop_after_daily_loss_pct]
+        stop_loss_vals = self.stop_after_consecutive_losses_values or [self.stop_after_consecutive_losses]
+        combos: list[dict[str, float | int]] = []
+        for risk_pct, open_t, day_t, stop_d, stop_c in itertools.product(
+            self.risk_per_trade_pct_values,
+            open_vals,
+            day_vals,
+            stop_daily_vals,
+            stop_loss_vals,
+        ):
+            combos.append({
+                "risk_per_trade_pct": float(risk_pct),
+                "max_open_trades": int(open_t),
+                "max_trades_per_day": int(day_t),
+                "stop_after_daily_loss_pct": float(stop_d),
+                "stop_after_consecutive_losses": int(stop_c),
+            })
+        return combos
 
 
 class PropExecutionConfig(BaseModel):
@@ -225,11 +298,32 @@ class PropVerdictConfig(BaseModel):
 class PropFirmConfig(BaseModel):
     name: str = "prop_firm_default"
     description: str = ""
+    program: PropProgramConfig | None = None
+    phases: list[PropPhaseConfig] = Field(default_factory=list)
     account: PropAccountConfig = Field(default_factory=PropAccountConfig)
     risk: PropRiskConfig = Field(default_factory=PropRiskConfig)
     execution: PropExecutionConfig = Field(default_factory=PropExecutionConfig)
     monte_carlo: PropMonteCarloConfig = Field(default_factory=PropMonteCarloConfig)
     verdict: PropVerdictConfig = Field(default_factory=PropVerdictConfig)
+
+    @property
+    def is_multiphase(self) -> bool:
+        return len(self.phases) > 0
+
+    @property
+    def program_type(self) -> str:
+        if self.program is not None:
+            return self.program.type
+        return "single_challenge" if not self.is_multiphase else "multi_step_bootcamp"
+
+    def bootcamp_phases(self) -> list[PropPhaseConfig]:
+        return [p for p in self.phases if p.name != "funded_trader"]
+
+    def funded_phase(self) -> PropPhaseConfig | None:
+        for phase in self.phases:
+            if phase.name == "funded_trader":
+                return phase
+        return None
 
 
 class FixedCandidateVariant(BaseModel):
@@ -323,7 +417,10 @@ def load_prop_firm_config(path: str | Path, base: Path | None = None) -> PropFir
     """Load and validate prop firm simulator YAML config."""
     resolved = resolve_path(path, base)
     data = load_yaml(resolved)
-    return PropFirmConfig.model_validate(data)
+    cfg = PropFirmConfig.model_validate(data)
+    if cfg.program is not None and cfg.name == "prop_firm_default":
+        cfg.name = cfg.program.name
+    return cfg
 
 
 def load_portfolio_candidates_config(path: str | Path, base: Path | None = None) -> PortfolioCandidatesConfig:

@@ -35,6 +35,7 @@ from auta_research.fixed_candidates import backtest_fixed, validate_fixed, run_f
 from auta_research.variants import parse_variant_json
 from auta_research.portfolio_sim import run_portfolio_simulation
 from auta_research.portfolio_reports import generate_portfolio_sim_report
+from auta_research.portfolio_sensitivity import run_portfolio_sensitivity
 
 console = Console()
 
@@ -188,8 +189,12 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
     config_path = _resolve_path(root, args.config)
 
     cfg = load_prop_firm_config(config_path, root)
+    if args.prop_mc_runs is not None:
+        cfg.monte_carlo.runs = args.prop_mc_runs
+
     sources = discover_trade_splits(trades_path, root)
-    console.print(f"[bold]Prop simulation[/bold] on {len(sources)} trade log(s):")
+    mode = "The5ers Bootcamp" if cfg.is_multiphase else "single-phase"
+    console.print(f"[bold]Prop simulation[/bold] ({mode}) on {len(sources)} trade log(s):")
     for name, path in sources:
         console.print(f"  - {name}: {path}")
 
@@ -205,15 +210,19 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
     table.add_column("Split")
     table.add_column("Risk %")
     table.add_column("Status")
-    table.add_column("Pass MC")
+    if cfg.is_multiphase:
+        table.add_column("Bootcamp MC")
+    else:
+        table.add_column("Pass MC")
     table.add_column("Verdict")
     table.add_column("Reason")
     for _, row in summary.head(15).iterrows():
+        mc_col = row.get("mc_bootcamp_pass_rate", row.get("mc_pass_rate"))
         table.add_row(
             str(row.get("trade_split", "")),
             str(row.get("risk_per_trade_pct", "")),
             str(row.get("status", "")),
-            f"{row.get('mc_pass_rate', 0):.1%}" if pd.notna(row.get("mc_pass_rate")) else "-",
+            f"{mc_col:.1%}" if pd.notna(mc_col) else "-",
             str(row.get("verdict", "")),
             str(row.get("rejection_reason", "") or ""),
         )
@@ -272,6 +281,31 @@ def cmd_portfolio_sim(args: argparse.Namespace) -> int:
         console.print(f"[green]Monte Carlo:[/green] {out_dir / 'portfolio_monte_carlo.csv'}")
     console.print(f"[green]Report:[/green] {report_path}")
     console.print(f"Recommended max risk: {meta.get('recommended_max_risk_pct')}%")
+    return 0
+
+
+def cmd_portfolio_sensitivity(args: argparse.Namespace) -> int:
+    """Sweep portfolio risk grid against prop-firm rules."""
+    root = _project_root()
+    portfolio_cfg = load_portfolio_candidates_config(_resolve_path(root, args.config), root)
+    prop_cfg = load_prop_firm_config(_resolve_path(root, args.prop_config), root)
+    if args.prop_mc_runs is not None:
+        prop_cfg.monte_carlo.runs = args.prop_mc_runs
+
+    mode = "The5ers Bootcamp" if prop_cfg.is_multiphase else "single-phase"
+    console.print(f"[bold]Portfolio sensitivity[/bold] ({mode}, {len(portfolio_cfg.portfolios)} portfolios)")
+
+    df, meta = run_portfolio_sensitivity(portfolio_cfg, prop_cfg, root)
+    out_dir = root / "data" / "results" / "portfolio_sensitivity"
+    console.print(f"[green]Results:[/green] {out_dir / 'portfolio_sensitivity.csv'} ({len(df)} combinations)")
+    if not df.empty:
+        sort_col = "bootcamp_pass_rate" if "bootcamp_pass_rate" in df.columns else "pass_rate"
+        if sort_col in df.columns:
+            best = df.iloc[0]
+            console.print(
+                f"Best: {best.get('portfolio_name')} @ {best.get('risk_per_trade_pct')}% "
+                f"({sort_col}={best.get(sort_col, 0):.1%})"
+            )
     return 0
 
 
@@ -421,6 +455,7 @@ def build_parser() -> argparse.ArgumentParser:
     prop = sub.add_parser("prop-sim", help="Prop-firm evaluation simulator")
     prop.add_argument("--trades", required=True, help="Trade log CSV path")
     prop.add_argument("--config", default="configs/prop_firm.yaml", help="Prop firm config YAML")
+    prop.add_argument("--prop-mc-runs", type=int, default=None, help="Override Monte Carlo runs")
     prop.set_defaults(func=cmd_prop_sim)
 
     btf = sub.add_parser("backtest-fixed", help="Backtest one fixed strategy variant")
@@ -472,6 +507,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override Monte Carlo runs per risk level",
     )
     psim.set_defaults(func=cmd_portfolio_sim)
+
+    psens = sub.add_parser("portfolio-sensitivity", help="Portfolio risk-parameter sensitivity sweep")
+    psens.add_argument("--config", default="configs/portfolio_candidates.yaml", help="Portfolio config YAML")
+    psens.add_argument("--prop-config", default="configs/prop_firm.yaml", help="Prop firm config YAML")
+    psens.add_argument("--prop-mc-runs", type=int, default=None, help="Override Monte Carlo runs")
+    psens.set_defaults(func=cmd_portfolio_sensitivity)
 
     return parser
 

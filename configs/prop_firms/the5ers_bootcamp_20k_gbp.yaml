@@ -1,0 +1,66 @@
+program:
+  name: the5ers_bootcamp_20k_gbp
+  type: multi_step_bootcamp
+  currency: GBP
+  leverage: "1:30"
+
+phases:
+  - name: step_1
+    starting_balance: 3724
+    profit_target_pct: 6.0
+    max_total_loss_pct: 5.0
+    max_daily_loss_pct: null
+    daily_pause_pct: null
+    time_limit_days: null
+
+  - name: step_2
+    starting_balance: 7449
+    profit_target_pct: 6.0
+    max_total_loss_pct: 5.0
+    max_daily_loss_pct: null
+    daily_pause_pct: null
+    time_limit_days: null
+
+  - name: step_3
+    starting_balance: 11173
+    profit_target_pct: 6.0
+    max_total_loss_pct: 5.0
+    max_daily_loss_pct: null
+    daily_pause_pct: null
+    time_limit_days: null
+
+  - name: funded_trader
+    starting_balance: 14898
+    profit_target_pct: 5.0
+    max_total_loss_pct: 4.0
+    max_daily_loss_pct: 3.0
+    daily_pause_pct: 3.0
+    time_limit_days: null
+
+risk:
+  risk_per_trade_pct_values: [0.25, 0.5, 0.75, 1.0]
+  max_open_trades: 1
+  max_open_trades_values: [1, 2, 3]
+  max_trades_per_day: 3
+  max_trades_per_day_values: [1, 2, 3, 5]
+  stop_after_daily_loss_pct: 1.5
+  stop_after_daily_loss_pct_values: [1.0, 1.5, 2.0]
+  stop_after_consecutive_losses: 3
+  stop_after_consecutive_losses_values: [2, 3, 4]
+  compound: false
+
+monte_carlo:
+  enabled: true
+  runs: 1000
+  shuffle_trades: true
+  bootstrap_with_replacement: true
+
+execution:
+  use_trade_log_r_results: true
+  include_spread_slippage: true
+
+verdict:
+  min_mc_pass_rate: 0.55
+  max_total_fail_rate: 0.25
+  max_daily_fail_rate: 0.35
+  min_oos_expectancy_r: 0.0

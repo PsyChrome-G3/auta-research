@@ -97,6 +97,15 @@ class MonteCarloResult:
     recommended: bool = False
 
 
+def _to_timestamp(val: Any) -> pd.Timestamp:
+    if pd.isna(val):
+        return pd.Timestamp("1970-01-01", tz="UTC")
+    ts = pd.Timestamp(val)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
 def _parse_trade_day(ts: Any) -> str:
     """Extract UTC calendar day from a trade timestamp."""
     if pd.isna(ts):
@@ -546,6 +555,18 @@ def run_prop_simulation(
     chart_samples: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Run full prop simulation for all splits and risk levels."""
+    if cfg.is_multiphase:
+        from auta_research.prop_multiphase import run_multiphase_prop_simulation
+
+        return run_multiphase_prop_simulation(
+            cfg,
+            trade_sources,
+            output_dir,
+            progress=progress,
+            progress_task=progress_task,
+            chart_samples=chart_samples,
+        )
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict[str, Any]] = []
@@ -555,6 +576,8 @@ def run_prop_simulation(
     mc_returns_by_key: dict[str, list[float]] = {}
 
     oos_expectancy: float | None = None
+
+    meta_mode = {"simulation_mode": "single_phase_challenge", "program_type": "single_challenge"}
 
     for split_name, path in trade_sources:
         trades = load_trade_log(path)
@@ -569,6 +592,8 @@ def run_prop_simulation(
                 )
             sim = simulate_account(trades, cfg, risk_pct, split_name)
             row = sim_to_dict(sim)
+            row["simulation_mode"] = "single_phase_challenge"
+            row["program_type"] = "single_challenge"
             mc_result: MonteCarloResult | None = None
 
             if cfg.monte_carlo.enabled:
@@ -582,6 +607,8 @@ def run_prop_simulation(
                 )
                 mc_objects.append(mc_result)
                 mc_row = mc_result.__dict__.copy()
+                mc_row["simulation_mode"] = "single_phase_challenge"
+                mc_row["program_type"] = "single_challenge"
                 mc_rows.append(mc_row)
 
                 if chart_samples > 0:
@@ -610,7 +637,9 @@ def run_prop_simulation(
         mc_df.loc[mc_df["risk_per_trade_pct"] == recommended, "recommended"] = True
 
     meta = {
+        **meta_mode,
         "recommended_max_risk_pct": recommended,
+        "recommended_risk_per_trade": recommended,
         "trade_splits": [s for s, _ in trade_sources],
         "equity_curves": equity_by_key,
         "mc_return_samples": mc_returns_by_key,

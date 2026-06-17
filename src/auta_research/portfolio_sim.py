@@ -395,6 +395,16 @@ def run_portfolio_simulation(
     project_root: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Run portfolio prop simulation for all configured portfolios."""
+    if prop_cfg.is_multiphase:
+        return _run_multiphase_portfolio_simulation(portfolio_cfg, prop_cfg, project_root)
+    return _run_single_phase_portfolio_simulation(portfolio_cfg, prop_cfg, project_root)
+
+
+def _run_single_phase_portfolio_simulation(
+    portfolio_cfg: PortfolioCandidatesConfig,
+    prop_cfg: PropFirmConfig,
+    project_root: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     out_dir = project_root / portfolio_cfg.output_root
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -472,6 +482,111 @@ def run_portfolio_simulation(
 
     with open(out_dir / "portfolio_meta.json", "w", encoding="utf-8") as f:
         slim = {k: v for k, v in meta.items() if k not in ("equity_curves", "mc_return_samples")}
+        json.dump(slim, f, indent=2, default=str)
+
+    return summary_df, mc_df, meta
+
+
+def _run_multiphase_portfolio_simulation(
+    portfolio_cfg: PortfolioCandidatesConfig,
+    prop_cfg: PropFirmConfig,
+    project_root: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Portfolio simulation using multi-phase bootcamp programme rules."""
+    from auta_research.prop_multiphase import (
+        RiskSettings,
+        multiphase_mc_to_dict,
+        multiphase_sim_to_dict,
+        recommend_multiphase_risk,
+        run_multiphase_monte_carlo,
+        simulate_multiphase_program,
+    )
+    from auta_research.prop_sim import assign_verdict, verdict_to_dict
+    from auta_research.prop_multiphase import _multiphase_to_sim_result
+
+    out_dir = project_root / portfolio_cfg.output_root
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_rows: list[dict[str, Any]] = []
+    mc_rows: list[dict[str, Any]] = []
+    mc_objects = []
+    equity_by_key: dict[str, list[float]] = {}
+    merged_trades_by_portfolio: dict[str, pd.DataFrame] = {}
+
+    for portfolio in portfolio_cfg.portfolios:
+        merged = load_portfolio_trades(
+            portfolio.trades,
+            project_root,
+            dedupe_same_signal=portfolio_cfg.dedupe_same_signal,
+        )
+        merged_trades_by_portfolio[portfolio.name] = merged
+        oos_expectancy = float(merged["r_result"].mean()) if len(merged) > 0 else 0.0
+
+        for risk_dict in prop_cfg.risk.iter_risk_settings(full_grid=False):
+            risk = RiskSettings.from_dict(risk_dict)
+            sim = simulate_multiphase_program(merged, prop_cfg, risk, portfolio.name)
+            row = multiphase_sim_to_dict(sim)
+            row["portfolio_name"] = portfolio.name
+            mc_result = None
+
+            if prop_cfg.monte_carlo.enabled:
+                mc_result = run_multiphase_monte_carlo(merged, prop_cfg, risk, portfolio.name)
+                mc_objects.append(mc_result)
+                mc_row = multiphase_mc_to_dict(mc_result)
+                mc_row["portfolio_name"] = portfolio.name
+                mc_rows.append(mc_row)
+
+            mc_adapter = None
+            if mc_result:
+                from auta_research.prop_sim import MonteCarloResult
+
+                mc_adapter = MonteCarloResult(
+                    risk_per_trade_pct=risk.risk_per_trade_pct,
+                    trade_split=portfolio.name,
+                    runs=mc_result.runs,
+                    pass_rate=mc_result.bootcamp_pass_rate,
+                    fail_rate=mc_result.fail_rate,
+                    daily_fail_rate=mc_result.daily_fail_rate,
+                    total_fail_rate=mc_result.total_fail_rate,
+                    incomplete_rate=mc_result.incomplete_rate,
+                    median_final_return_pct=mc_result.median_final_return_pct,
+                    p5_final_return_pct=mc_result.p5_final_return_pct,
+                    p95_final_return_pct=mc_result.p95_final_return_pct,
+                    worst_drawdown_pct=mc_result.worst_drawdown_pct,
+                )
+                row["mc_bootcamp_pass_rate"] = mc_result.bootcamp_pass_rate
+                row["mc_step_1_pass_rate"] = mc_result.step_1_pass_rate
+                row["mc_step_2_pass_rate"] = mc_result.step_2_pass_rate
+                row["mc_step_3_pass_rate"] = mc_result.step_3_pass_rate
+                row["mc_funded_survival_rate"] = mc_result.funded_survival_rate
+
+            sim_adapter = _multiphase_to_sim_result(sim, portfolio.name, risk.risk_per_trade_pct)
+            verdict_result = assign_verdict(sim_adapter, mc_adapter, prop_cfg, oos_expectancy)
+            row.update(verdict_to_dict(verdict_result))
+            summary_rows.append(row)
+            equity_by_key[f"{portfolio.name}_{risk.risk_per_trade_pct}"] = sim.equity_curve
+
+    summary_df = pd.DataFrame(summary_rows)
+    mc_df = pd.DataFrame(mc_rows)
+    recommended = recommend_multiphase_risk(mc_objects, prop_cfg)
+    if recommended is not None and not summary_df.empty:
+        summary_df.loc[summary_df["risk_per_trade_pct"] == recommended, "recommended_risk_per_trade"] = True
+
+    meta = {
+        "simulation_mode": "multi_phase_bootcamp",
+        "program_type": prop_cfg.program_type,
+        "program_name": prop_cfg.name,
+        "recommended_risk_per_trade": recommended,
+        "portfolios": [p.name for p in portfolio_cfg.portfolios],
+        "equity_curves": equity_by_key,
+        "merged_trade_counts": {k: len(v) for k, v in merged_trades_by_portfolio.items()},
+    }
+
+    summary_df.to_csv(out_dir / "portfolio_summary.csv", index=False)
+    if not mc_df.empty:
+        mc_df.to_csv(out_dir / "portfolio_monte_carlo.csv", index=False)
+    with open(out_dir / "portfolio_meta.json", "w", encoding="utf-8") as f:
+        slim = {k: v for k, v in meta.items() if k != "equity_curves"}
         json.dump(slim, f, indent=2, default=str)
 
     return summary_df, mc_df, meta
