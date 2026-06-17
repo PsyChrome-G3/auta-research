@@ -1,0 +1,42 @@
+name: fixed_candidates_example
+description: >
+  Example fixed-candidate batch config. Copy to configs/private/fixed_candidates.yaml
+  and replace symbols, dates, and variant parameters with your own research.
+
+output_root: data/results/fixed_candidates
+strategy_config: configs/strategies/two_candle_rejection.yaml
+
+candidates:
+  - name: EURUSD_H4_example
+    data: data/raw/EURUSD_H4_20240101_20260616.csv
+    split_date: "2025-06-01"
+    variant:
+      wick_ratio_min: 1.5
+      body_ratio_min: 1.2
+      require_body_engulf: false
+      entry_mode: next_open
+      stop_mode: pattern_extreme
+      tp_r_value: 1.0
+      atr_buffer: 0.0
+      trend_filter: none
+      volatility_filter: false
+      session_filter: false
+      buy_colours: ["bearish", "flat"]
+      sell_colours: ["bullish", "flat"]
+
+  - name: GBPUSD_H4_example
+    data: data/raw/GBPUSD_H4_20240101_20260616.csv
+    split_date: "2025-06-01"
+    variant:
+      wick_ratio_min: 2.0
+      body_ratio_min: 1.5
+      require_body_engulf: false
+      entry_mode: next_open
+      stop_mode: candle2_extreme
+      tp_r_value: 1.0
+      atr_buffer: 0.0
+      trend_filter: none
+      volatility_filter: false
+      session_filter: false
+      buy_colours: ["bearish", "flat"]
+      sell_colours: ["bullish", "flat"]

@@ -63,3 +63,28 @@ def test_detect_empty_on_flat_data():
     cfg = StrategyConfig()
     signals = detect_patterns(df, cfg)
     assert len(signals) == 0
+
+
+def test_butt_buddy_rejects_open_gap():
+    df = _make_sell_pattern_df()
+    # Gap between C1 close and C2 open
+    df.iloc[-1, df.columns.get_loc("open")] = 1.1050
+    cfg = StrategyConfig()
+    cfg.pattern.require_butt_buddy = True
+    cfg.pattern.butt_buddy_max_gap_points = 1.0
+    cfg.pattern.wick_ratio_min = 1.5
+    cfg.pattern.body_ratio_min = 1.2
+    signals = detect_patterns(df, cfg)
+    assert len(signals) == 0
+
+
+def test_butt_buddy_accepts_neck_and_neck_sell():
+    df = _make_sell_pattern_df()
+    cfg = StrategyConfig()
+    cfg.pattern.require_butt_buddy = True
+    cfg.pattern.require_body_engulf = True
+    cfg.pattern.wick_ratio_min = 1.5
+    cfg.pattern.body_ratio_min = 1.2
+    cfg.pattern.require_second_candle_wick_bias = True
+    signals = detect_patterns(df, cfg)
+    assert len(signals) >= 1

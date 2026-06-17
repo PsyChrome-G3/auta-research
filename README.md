@@ -1,8 +1,10 @@
 # AUTA Research
 
-Research-only backtesting toolkit for the AUTA 3.0 two-candle wick rejection trading strategy.
+Open-source **research-only** backtesting toolkit for two-candle wick rejection patterns on OHLCV data.
 
-**This tool does not place live trades.** It connects to MetaTrader 5 only to pull historical OHLCV data, or you can load pre-exported CSV files. No order execution code is included.
+**This tool does not place live trades.** It connects to MetaTrader 5 only to pull historical data, or you can load CSV exports. No order execution code is included.
+
+Build your **own** strategy by editing local configs (see [docs/PUBLIC_REPO.md](docs/PUBLIC_REPO.md)). Example templates live in `configs/examples/`. **Do not commit** tuned candidates, watchlists, or results.
 
 ## Purpose
 
@@ -133,6 +135,8 @@ Outputs: `prop_sim_summary.csv`, `prop_sim_monte_carlo.csv`, `reports/prop_sim_r
 
 ## Fixed Candidate Testing
 
+Copy `configs/examples/fixed_candidates.example.yaml` to `configs/private/fixed_candidates.yaml` (or `configs/fixed_candidates.yaml` — gitignored) and edit for your symbols/variants.
+
 Run a single variant backtest (does not touch `data/results/latest` unless `--write-latest`):
 
 ```bash
@@ -150,10 +154,10 @@ auta-research validate-fixed --data data/raw/EURUSD_H4_20240101_20260616.csv \
   --output-dir data/results/fixed_candidates/my_candidate
 ```
 
-Batch all candidates from `configs/fixed_candidates.yaml` (runs prop-sim on each test split and writes a comparison report):
+Batch all candidates from your local config (runs prop-sim on each test split and writes a comparison report):
 
 ```bash
-auta-research validate-fixed-batch --config configs/fixed_candidates.yaml
+auta-research validate-fixed-batch --config configs/private/fixed_candidates.yaml
 ```
 
 Comparison report: `reports/fixed_candidate_comparison_<timestamp>.md`
@@ -163,7 +167,7 @@ Comparison report: `reports/fixed_candidate_comparison_<timestamp>.md`
 Evaluate multiple fixed candidates as one funded account portfolio:
 
 ```bash
-auta-research portfolio-sim --config configs/portfolio_candidates.yaml --prop-config configs/prop_firm.yaml
+auta-research portfolio-sim --config configs/private/portfolio_candidates.yaml --prop-config configs/prop_firm.yaml
 ```
 
 Merges trade logs chronologically, enforces `max_open_trades` and daily/total loss rules, runs Monte Carlo, and reports strategy contribution and daily correlation.
@@ -180,12 +184,12 @@ Outputs: `data/results/portfolio_sim/`, `reports/portfolio_sim_report_*.md`, cha
 
 ## Roadmap: MQL5 EA
 
-Once a variant shows positive out-of-sample expectancy with adequate sample size:
+Once **your** variant shows positive out-of-sample expectancy with adequate sample size:
 
 1. Port pattern detection logic to MQL5.
-2. Implement the proven entry/stop/TP rules as an Expert Advisor.
-3. Forward-test on demo account before any live deployment.
-4. Keep this Python tool for ongoing research and parameter updates.
+2. Implement your proven entry/stop/TP rules as an Expert Advisor.
+3. Forward-test on demo before live deployment.
+4. Keep proprietary configs and watchlists **local** (`configs/private/`); use this repo for the engine only.
 
 ## Disclaimer
 

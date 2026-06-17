@@ -11,9 +11,14 @@ from pydantic import BaseModel, Field
 
 class PatternConfig(BaseModel):
     wick_ratio_min: float = 2.0
+    candle2_wick_ratio_min: float | None = None
     body_ratio_min: float = 1.5
     require_body_engulf: bool = False
     require_second_candle_wick_bias: bool = True
+    require_c2_directional_wick_larger_than_c1: bool = False
+    c2_wick_growth_min: float = 1.0
+    require_butt_buddy: bool = False
+    butt_buddy_max_gap_points: float = 5.0
     min_body_to_range_ratio: float = 0.05
     max_body_to_range_ratio_for_flat: float = 0.15
     allow_candle1_colours: dict[str, list[str]] = Field(
@@ -236,17 +241,13 @@ class PropRiskConfig(BaseModel):
             or self.stop_after_consecutive_losses_values
         ):
             return self._full_risk_grid()
-        open_v = (self.max_open_trades_values or [self.max_open_trades])[0]
-        day_v = (self.max_trades_per_day_values or [self.max_trades_per_day])[0]
-        stop_d = (self.stop_after_daily_loss_pct_values or [self.stop_after_daily_loss_pct])[0]
-        stop_c = (self.stop_after_consecutive_losses_values or [self.stop_after_consecutive_losses])[0]
         return [
             {
                 "risk_per_trade_pct": float(rp),
-                "max_open_trades": int(open_v),
-                "max_trades_per_day": int(day_v),
-                "stop_after_daily_loss_pct": float(stop_d),
-                "stop_after_consecutive_losses": int(stop_c),
+                "max_open_trades": int(self.max_open_trades),
+                "max_trades_per_day": int(self.max_trades_per_day),
+                "stop_after_daily_loss_pct": float(self.stop_after_daily_loss_pct),
+                "stop_after_consecutive_losses": int(self.stop_after_consecutive_losses),
             }
             for rp in self.risk_per_trade_pct_values
         ]
@@ -330,6 +331,11 @@ class FixedCandidateVariant(BaseModel):
     wick_ratio_min: float = 1.5
     body_ratio_min: float = 1.2
     require_body_engulf: bool = False
+    require_second_candle_wick_bias: bool = True
+    require_c2_directional_wick_larger_than_c1: bool = False
+    candle2_wick_ratio_min: float | None = None
+    c2_wick_growth_min: float = 1.0
+    require_butt_buddy: bool = False
     entry_mode: str = "next_open"
     stop_mode: str = "pattern_extreme"
     tp_r_value: float = 1.0

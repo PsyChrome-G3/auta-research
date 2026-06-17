@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -10,13 +11,35 @@ venv/
 .env
 *.log
 .DS_Store
-data/raw/*.csv
-data/processed/*.csv
-data/results/**/*.csv
-data/results/**/*.json
-reports/*.md
-reports/assets/*.png
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 uv.lock
+
+# --- Local / private strategy research (NEVER commit) ---
+configs/private/*
+!configs/private/README.md
+configs/fixed_candidates.yaml
+configs/portfolio_candidates.yaml
+configs/locked_butt_buddy_strategy.yaml
+configs/research.local.yaml
+configs/strategies/two_candle_rejection_butt_buddy.yaml
+
+# Local screening / locked-strategy scripts (may embed watchlists)
+scripts/
+
+# Market data (pull locally via MT5)
+data/raw/*.csv
+data/processed/*.csv
+
+# All generated outputs
+data/results/**
+!data/results/**/.gitkeep
+
+reports/**
+!reports/.gitkeep
+!reports/assets/.gitkeep
+
+# Cheat sheets / handoff docs with proprietary watchlists
+tools/generate_manual_cheatsheet.py
+**/AUTA_manual_trading_cheatsheet.pdf

@@ -17,6 +17,17 @@ def normalize_variant(raw: dict[str, Any]) -> dict[str, Any]:
         "wick_ratio_min": float(raw["wick_ratio_min"]),
         "body_ratio_min": float(raw["body_ratio_min"]),
         "require_body_engulf": bool(raw.get("require_body_engulf", False)),
+        "require_second_candle_wick_bias": bool(raw.get("require_second_candle_wick_bias", True)),
+        "require_c2_directional_wick_larger_than_c1": bool(
+            raw.get("require_c2_directional_wick_larger_than_c1", False)
+        ),
+        "candle2_wick_ratio_min": (
+            float(raw["candle2_wick_ratio_min"])
+            if raw.get("candle2_wick_ratio_min") is not None
+            else None
+        ),
+        "c2_wick_growth_min": float(raw.get("c2_wick_growth_min", 1.0)),
+        "require_butt_buddy": bool(raw.get("require_butt_buddy", False)),
         "buy_colours": list(buy),
         "sell_colours": list(sell),
         "entry_mode": str(raw["entry_mode"]),
@@ -41,6 +52,13 @@ def apply_variant(base: StrategyConfig, variant: dict[str, Any]) -> StrategyConf
     cfg.pattern.wick_ratio_min = v["wick_ratio_min"]
     cfg.pattern.body_ratio_min = v["body_ratio_min"]
     cfg.pattern.require_body_engulf = v["require_body_engulf"]
+    cfg.pattern.require_second_candle_wick_bias = v["require_second_candle_wick_bias"]
+    cfg.pattern.require_c2_directional_wick_larger_than_c1 = v[
+        "require_c2_directional_wick_larger_than_c1"
+    ]
+    cfg.pattern.candle2_wick_ratio_min = v["candle2_wick_ratio_min"]
+    cfg.pattern.c2_wick_growth_min = v["c2_wick_growth_min"]
+    cfg.pattern.require_butt_buddy = v["require_butt_buddy"]
     cfg.pattern.allow_candle1_colours["buy"] = v["buy_colours"]
     cfg.pattern.allow_candle1_colours["sell"] = v["sell_colours"]
     cfg.entry.modes = [v["entry_mode"]]

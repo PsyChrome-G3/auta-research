@@ -5,8 +5,10 @@ import pandas as pd
 from auta_research.candle_math import (
     body_engulfs,
     body_ratio,
+    c2_directional_wick_exceeds_c1,
     candle_colour,
     enrich_candles,
+    neck_and_neck,
     wick_ratio_buy,
     wick_ratio_sell,
 )
@@ -50,3 +52,17 @@ def test_body_engulf():
 
 def test_body_ratio():
     assert body_ratio(0.05, 0.10) == 2.0
+
+
+def test_neck_and_neck():
+    assert neck_and_neck(1.1010, 1.1010, 0.0001) is True
+    assert neck_and_neck(1.1010, 1.1020, 0.00005) is False
+    assert neck_and_neck(1.1010, 1.10105, 0.0001) is True
+
+
+def test_c2_directional_wick_exceeds_c1():
+    # Sell: upper wick on C2 larger than C1
+    assert c2_directional_wick_exceeds_c1(0.009, 0.001, 0.012, 0.002, "sell") is True
+    assert c2_directional_wick_exceeds_c1(0.012, 0.001, 0.009, 0.002, "sell") is False
+    # Buy: lower wick on C2 larger than C1
+    assert c2_directional_wick_exceeds_c1(0.001, 0.008, 0.002, 0.012, "buy") is True

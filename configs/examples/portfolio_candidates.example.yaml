@@ -1,0 +1,13 @@
+name: portfolio_candidates_example
+description: >
+  Example portfolio prop-sim config. Copy to configs/private/portfolio_candidates.yaml
+  and point trade paths at your own fixed-candidate outputs.
+
+dedupe_same_signal: true
+output_root: data/results/portfolio_sim
+
+portfolios:
+  - name: example_pair
+    trades:
+      - data/results/fixed_candidates/EURUSD_H4_example/trades_test.csv
+      - data/results/fixed_candidates/GBPUSD_H4_example/trades_test.csv

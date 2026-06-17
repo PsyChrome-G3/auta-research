@@ -1,0 +1,29 @@
+name: locked_strategy_example
+description: >
+  Template for a locked watchlist after screening. Copy to configs/private/ and fill
+  in your own symbols, timeframes, and backtest stats. Do not commit the filled file.
+
+locked_on: null
+evaluation_period:
+  from: "YYYY-MM-DD"
+  to: "YYYY-MM-DD"
+strategy_config: configs/strategies/two_candle_rejection.yaml
+variant:
+  wick_ratio_min: 1.5
+  body_ratio_min: 1.2
+  require_body_engulf: false
+  entry_mode: next_open
+  stop_mode: pattern_extreme
+  tp_r_value: 0.5
+execution:
+  risk_per_trade_pct: 0.5
+  max_trades_per_day: 3
+symbols: []
+# Example entry after screening:
+# - symbol: EURUSD
+#   timeframes: [H4]
+#   legs:
+#     - timeframe: H4
+#       trades: 0
+#       win_rate: 0.0
+#       total_r: 0.0

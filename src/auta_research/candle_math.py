@@ -56,3 +56,35 @@ def body_engulfs(c1_open: float, c1_close: float, c2_open: float, c2_close: floa
 def body_ratio(c1_body: float, c2_body: float) -> float:
     """Ratio of candle2 body to candle1 body."""
     return c2_body / max(c1_body, TINY)
+
+
+def neck_and_neck(c1_close: float, c2_open: float, max_gap_price: float) -> bool:
+    """Return True if candle2 opens at candle1 close within tolerance (butt-buddy alignment)."""
+    return abs(c2_open - c1_close) <= max(max_gap_price, TINY)
+
+
+def directional_wick_size(
+    upper_wick: float,
+    lower_wick: float,
+    direction: str,
+) -> float:
+    """Return rejection wick length in the trade direction (lower for buy, upper for sell)."""
+    if direction == "buy":
+        return float(lower_wick)
+    return float(upper_wick)
+
+
+def c2_directional_wick_exceeds_c1(
+    c1_upper: float,
+    c1_lower: float,
+    c2_upper: float,
+    c2_lower: float,
+    direction: str,
+    *,
+    growth_min: float = 1.0,
+) -> bool:
+    """Return True if C2 rejection wick is larger than C1's in the same direction."""
+    c1_wick = directional_wick_size(c1_upper, c1_lower, direction)
+    c2_wick = directional_wick_size(c2_upper, c2_lower, direction)
+    threshold = c1_wick * max(growth_min, 1.0)
+    return c2_wick > threshold - TINY
