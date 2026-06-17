@@ -115,6 +115,7 @@ auta-research report --results data/results/latest
 | Trade logs | `data/results/latest/trades.csv` |
 | Optimisation | `data/results/optimisation/` |
 | Validation | `data/results/validation/` |
+| Fixed candidates | `data/results/fixed_candidates/<name>/` |
 | Reports | `reports/` |
 | Charts | `reports/assets/` |
 
@@ -126,9 +127,48 @@ Evaluate whether a strategy can pass funded-account rules (research only):
 auta-research prop-sim --trades data/results/latest/trades.csv --config configs/prop_firm.yaml
 ```
 
-Automatically includes `data/results/validate_fixed/trades_train.csv` and `trades_test.csv` when present.
+Point `--trades` at a specific split (e.g. `data/results/fixed_candidates/EURUSD_H4_1p5R_candle2/trades_test.csv`) to simulate only that log. When the trade file lives in a fixed-candidate directory, outputs are written to that candidate's `prop_sim/` folder.
 
-Outputs: `data/results/prop_sim/`, `reports/prop_sim_report_*.md`, and charts under `reports/assets/`.
+Outputs: `prop_sim_summary.csv`, `prop_sim_monte_carlo.csv`, `reports/prop_sim_report_*.md`, and charts under `reports/assets/`.
+
+## Fixed Candidate Testing
+
+Run a single variant backtest (does not touch `data/results/latest` unless `--write-latest`):
+
+```bash
+auta-research backtest-fixed --data data/raw/EURUSD_H4_20240101_20260616.csv \
+  --variant-json '{"wick_ratio_min":1.5,...}' \
+  --output-dir data/results/fixed_candidates/my_candidate
+```
+
+Train/test validation with split by bar timestamp:
+
+```bash
+auta-research validate-fixed --data data/raw/EURUSD_H4_20240101_20260616.csv \
+  --variant-json '{"wick_ratio_min":1.5,...}' \
+  --split-date 2025-06-01 \
+  --output-dir data/results/fixed_candidates/my_candidate
+```
+
+Batch all candidates from `configs/fixed_candidates.yaml` (runs prop-sim on each test split and writes a comparison report):
+
+```bash
+auta-research validate-fixed-batch --config configs/fixed_candidates.yaml
+```
+
+Comparison report: `reports/fixed_candidate_comparison_<timestamp>.md`
+
+## Portfolio Prop Simulation
+
+Evaluate multiple fixed candidates as one funded account portfolio:
+
+```bash
+auta-research portfolio-sim --config configs/portfolio_candidates.yaml --prop-config configs/prop_firm.yaml
+```
+
+Merges trade logs chronologically, enforces `max_open_trades` and daily/total loss rules, runs Monte Carlo, and reports strategy contribution and daily correlation.
+
+Outputs: `data/results/portfolio_sim/`, `reports/portfolio_sim_report_*.md`, charts under `reports/assets/`.
 
 
 ## Confidence Rules

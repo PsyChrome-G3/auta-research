@@ -23,7 +23,7 @@ from auta_research.metrics import (
     stability_score,
     win_rate_defensible,
 )
-from auta_research.optimiser import _apply_variant, _grid_variants
+from auta_research.variants import apply_variant as _apply_variant
 from auta_research.patterns import detect_patterns, pattern_cache_key
 
 console = Console()

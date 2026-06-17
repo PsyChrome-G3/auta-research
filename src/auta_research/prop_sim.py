@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,11 +28,25 @@ VERDICT_LABELS = (
     "demo forward-test candidate",
 )
 
-VALIDATE_FIXED_DIRS = (
-    "validate_fixed",
-    "validate-fixed",
-    "validation_fixed",
+REJECTION_REASONS = (
+    "negative_expectancy",
+    "monte_carlo_pass_rate_below_threshold",
+    "daily_failure_rate_too_high",
+    "total_failure_rate_too_high",
+    "insufficient_trade_count",
+    "incomplete_too_often",
+    "no_oos_test_available",
 )
+
+MIN_TRADES_FOR_VERDICT = 20
+
+
+@dataclass
+class VerdictResult:
+    """Prop-firm research verdict with optional rejection reason."""
+
+    verdict: str
+    rejection_reason: str | None = None
 
 
 @dataclass
@@ -111,27 +126,26 @@ def load_trade_log(path: str | Path) -> pd.DataFrame:
 
 
 def discover_trade_splits(primary: Path, project_root: Path) -> list[tuple[str, Path]]:
-    """Return trade logs to simulate: primary plus validate-fixed train/test if present."""
-    sources: list[tuple[str, Path]] = []
-    if primary.exists():
-        sources.append(("full", primary.resolve()))
-
-    for dirname in VALIDATE_FIXED_DIRS:
-        fixed_dir = project_root / "data" / "results" / dirname
-        if not fixed_dir.is_dir():
-            continue
-        train = fixed_dir / "trades_train.csv"
-        test = fixed_dir / "trades_test.csv"
-        if train.exists():
-            sources.append(("train", train.resolve()))
-        if test.exists():
-            sources.append(("test", test.resolve()))
-        if sources:
-            break
-
-    if not sources:
+    """Return trade logs to simulate based on the requested path."""
+    if not primary.exists():
         raise FileNotFoundError(f"No trade log found at {primary}")
-    return sources
+
+    primary = primary.resolve()
+    parent = primary.parent
+    name = primary.name
+
+    if name == "trades_test.csv":
+        return [("test", primary)]
+    if name == "trades_train.csv":
+        return [("train", primary)]
+    if name == "trades.csv":
+        train = parent / "trades_train.csv"
+        test = parent / "trades_test.csv"
+        if train.exists() and test.exists():
+            return [("train", train), ("test", test)]
+        return [("full", primary)]
+
+    return [("full", primary)]
 
 
 def _trade_r(row: pd.Series, cfg: PropFirmConfig) -> float:
@@ -356,6 +370,9 @@ def run_monte_carlo(
     cfg: PropFirmConfig,
     risk_per_trade_pct: float,
     trade_split: str = "full",
+    *,
+    progress: Any | None = None,
+    progress_task: int | None = None,
 ) -> MonteCarloResult:
     """Run Monte Carlo resampling of trade order/outcomes."""
     mc = cfg.monte_carlo
@@ -383,7 +400,8 @@ def run_monte_carlo(
     returns: list[float] = []
     drawdowns: list[float] = []
 
-    for _ in range(runs):
+    report_every = max(1, runs // 20)
+    for i in range(runs):
         if mc.bootstrap_with_replacement:
             idx = rng.integers(0, len(r_vals), size=len(r_vals))
             sample = trades.iloc[idx].copy()
@@ -397,6 +415,12 @@ def run_monte_carlo(
         statuses.append(sim.status)
         returns.append(sim.final_return_pct)
         drawdowns.append(sim.max_drawdown_pct)
+
+        if progress is not None and progress_task is not None and (i + 1) % report_every == 0:
+            progress.update(
+                progress_task,
+                description=f"prop-sim MC {trade_split} @ {risk_per_trade_pct}% ({i + 1}/{runs})",
+            )
 
     statuses_arr = np.array(statuses)
     pass_rate = float((statuses_arr == "passed").mean())
@@ -426,7 +450,7 @@ def recommend_max_risk(mc_rows: list[MonteCarloResult], cfg: PropFirmConfig) -> 
     verdict_cfg = cfg.verdict
     best: float | None = None
     for row in sorted(mc_rows, key=lambda r: r.risk_per_trade_pct):
-        if row.trade_split not in ("full", "test"):
+        if row.trade_split == "train":
             continue
         if (
             row.pass_rate >= verdict_cfg.min_mc_pass_rate
@@ -442,38 +466,68 @@ def assign_verdict(
     mc: MonteCarloResult | None,
     cfg: PropFirmConfig,
     oos_expectancy: float | None = None,
-) -> str:
-    """Assign research verdict label for prop-firm survivability."""
+) -> VerdictResult:
+    """Assign research verdict label and rejection reason for prop-firm survivability."""
     vcfg = cfg.verdict
-    is_oos = sim.trade_split in ("test", "oos")
+    is_oos = sim.trade_split in ("test", "oos") or sim.trade_split not in ("train", "full")
     is_train = sim.trade_split in ("train", "full")
 
-    if sim.average_r <= 0 or (mc and mc.pass_rate < 0.3):
-        return "rejected"
+    if sim.total_trades_taken < MIN_TRADES_FOR_VERDICT:
+        return VerdictResult("rejected", "insufficient_trade_count")
 
-    if mc and (
-        mc.total_fail_rate > vcfg.max_total_fail_rate
-        or mc.daily_fail_rate > vcfg.max_daily_fail_rate
-    ):
-        return "promising but too risky"
+    if sim.average_r <= 0:
+        return VerdictResult("rejected", "negative_expectancy")
+
+    if mc and mc.incomplete_rate > 0.5 and not sim.passed:
+        return VerdictResult("rejected", "incomplete_too_often")
+
+    if mc and mc.pass_rate < 0.3:
+        return VerdictResult("rejected", "monte_carlo_pass_rate_below_threshold")
+
+    if mc and mc.total_fail_rate > vcfg.max_total_fail_rate:
+        reason = "total_failure_rate_too_high"
+        if sim.average_r > 0 and mc.pass_rate >= 0.3:
+            return VerdictResult("promising but too risky", reason)
+        return VerdictResult("rejected", reason)
+
+    if mc and mc.daily_fail_rate > vcfg.max_daily_fail_rate:
+        reason = "daily_failure_rate_too_high"
+        if sim.average_r > 0 and mc.pass_rate >= 0.3:
+            return VerdictResult("promising but too risky", reason)
+        return VerdictResult("rejected", reason)
 
     if sim.cluster_dependent:
-        return "promising but too risky"
+        return VerdictResult("promising but too risky", "total_failure_rate_too_high")
 
     oos_ok = oos_expectancy is not None and oos_expectancy >= vcfg.min_oos_expectancy_r
 
     if is_oos and oos_ok and mc and mc.pass_rate >= vcfg.min_mc_pass_rate:
         if not sim.cluster_dependent and mc.total_fail_rate <= vcfg.max_total_fail_rate:
-            return "demo forward-test candidate"
-        return "passes OOS candidate"
+            return VerdictResult("demo forward-test candidate")
+        return VerdictResult("passes OOS candidate")
 
     if is_train and sim.passed and mc and mc.pass_rate >= vcfg.min_mc_pass_rate:
-        return "passes in-sample only"
+        return VerdictResult("passes in-sample only")
+
+    if is_train and not is_oos and oos_expectancy is None and sim.trade_split == "full":
+        if mc and mc.pass_rate < vcfg.min_mc_pass_rate:
+            return VerdictResult("rejected", "no_oos_test_available")
 
     if mc and mc.pass_rate >= vcfg.min_mc_pass_rate * 0.8:
-        return "promising but too risky"
+        return VerdictResult("promising but too risky", "monte_carlo_pass_rate_below_threshold")
 
-    return "rejected"
+    if mc and mc.pass_rate < vcfg.min_mc_pass_rate:
+        return VerdictResult("rejected", "monte_carlo_pass_rate_below_threshold")
+
+    return VerdictResult("rejected", "monte_carlo_pass_rate_below_threshold")
+
+
+def verdict_to_dict(result: VerdictResult) -> dict[str, str | None]:
+    """Serialize verdict for CSV/report output."""
+    return {
+        "verdict": result.verdict,
+        "rejection_reason": result.rejection_reason,
+    }
 
 
 def sim_to_dict(sim: SimResult) -> dict[str, Any]:
@@ -486,6 +540,10 @@ def run_prop_simulation(
     cfg: PropFirmConfig,
     trade_sources: list[tuple[str, Path]],
     output_dir: Path,
+    *,
+    progress: Any | None = None,
+    progress_task: int | None = None,
+    chart_samples: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Run full prop simulation for all splits and risk levels."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -504,30 +562,45 @@ def run_prop_simulation(
             oos_expectancy = float(trades["r_result"].mean())
 
         for risk_pct in cfg.risk.risk_per_trade_pct_values:
+            if progress is not None and progress_task is not None:
+                progress.update(
+                    progress_task,
+                    description=f"prop-sim {split_name} @ {risk_pct}% risk",
+                )
             sim = simulate_account(trades, cfg, risk_pct, split_name)
             row = sim_to_dict(sim)
             mc_result: MonteCarloResult | None = None
 
             if cfg.monte_carlo.enabled:
-                mc_result = run_monte_carlo(trades, cfg, risk_pct, split_name)
+                mc_result = run_monte_carlo(
+                    trades,
+                    cfg,
+                    risk_pct,
+                    split_name,
+                    progress=progress,
+                    progress_task=progress_task,
+                )
                 mc_objects.append(mc_result)
                 mc_row = mc_result.__dict__.copy()
                 mc_rows.append(mc_row)
 
-                if cfg.monte_carlo.enabled and cfg.monte_carlo.runs > 0:
+                if chart_samples > 0:
                     key = f"{split_name}_{risk_pct}"
-                    mc_returns_by_key[key] = _mc_return_samples(trades, cfg, risk_pct, 200)
+                    mc_returns_by_key[key] = _mc_return_samples(trades, cfg, risk_pct, chart_samples)
 
-            verdict = assign_verdict(sim, mc_result, cfg, oos_expectancy if split_name == "test" else None)
-            row["verdict"] = verdict
+            verdict_result = assign_verdict(sim, mc_result, cfg, oos_expectancy if split_name == "test" else None)
+            row.update(verdict_to_dict(verdict_result))
             if mc_result:
                 row["mc_pass_rate"] = mc_result.pass_rate
                 row["mc_fail_rate"] = mc_result.fail_rate
                 row["mc_total_fail_rate"] = mc_result.total_fail_rate
                 row["mc_daily_fail_rate"] = mc_result.daily_fail_rate
+                row["mc_incomplete_rate"] = mc_result.incomplete_rate
 
             summary_rows.append(row)
             equity_by_key[f"{split_name}_{risk_pct}"] = sim.equity_curve
+            if progress is not None and progress_task is not None:
+                progress.advance(progress_task)
 
     summary_df = pd.DataFrame(summary_rows)
     mc_df = pd.DataFrame(mc_rows)
@@ -547,6 +620,11 @@ def run_prop_simulation(
     summary_df.to_csv(output_dir / "prop_sim_summary.csv", index=False)
     if not mc_df.empty:
         mc_df.to_csv(output_dir / "prop_sim_monte_carlo.csv", index=False)
+
+    meta_path = output_dir / "prop_sim_meta.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        slim = {k: v for k, v in meta.items() if k not in ("equity_curves", "mc_return_samples")}
+        json.dump(slim, f, indent=2, default=str)
 
     return summary_df, mc_df, meta
 

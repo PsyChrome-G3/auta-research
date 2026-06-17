@@ -76,7 +76,7 @@ def test_assign_verdict_rejected_on_negative_edge():
         max_daily_loss_pct=0.5,
         days_to_pass=None,
         trading_days=5,
-        total_trades_taken=10,
+        total_trades_taken=25,
         win_rate=0.3,
         average_r=-0.2,
         profit_factor=0.5,
@@ -84,18 +84,13 @@ def test_assign_verdict_rejected_on_negative_edge():
         largest_winning_day=100,
         largest_losing_day=-200,
     )
-    assert assign_verdict(sim, None, cfg) == "rejected"
+    result = assign_verdict(sim, None, cfg)
+    assert result.verdict == "rejected"
+    assert result.rejection_reason == "negative_expectancy"
 
 
-def test_discover_validate_fixed(tmp_path: Path):
+def test_discover_trade_splits_full_only(tmp_path: Path):
     primary = tmp_path / "trades.csv"
     primary.write_text("signal_time,r_result\n2024-01-01T00:00:00Z,1.0\n", encoding="utf-8")
-    fixed = tmp_path / "data" / "results" / "validate_fixed"
-    fixed.mkdir(parents=True)
-    (fixed / "trades_test.csv").write_text(
-        "signal_time,r_result\n2024-02-01T00:00:00Z,0.5\n", encoding="utf-8"
-    )
     sources = discover_trade_splits(primary, tmp_path)
-    labels = [s[0] for s in sources]
-    assert "full" in labels
-    assert "test" in labels
+    assert sources == [("full", primary.resolve())]

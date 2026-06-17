@@ -232,6 +232,47 @@ class PropFirmConfig(BaseModel):
     verdict: PropVerdictConfig = Field(default_factory=PropVerdictConfig)
 
 
+class FixedCandidateVariant(BaseModel):
+    wick_ratio_min: float = 1.5
+    body_ratio_min: float = 1.2
+    require_body_engulf: bool = False
+    entry_mode: str = "next_open"
+    stop_mode: str = "pattern_extreme"
+    tp_r_value: float = 1.0
+    atr_buffer: float = 0.0
+    trend_filter: str = "none"
+    volatility_filter: bool = False
+    session_filter: bool = False
+    buy_colours: list[str] = Field(default_factory=lambda: ["bearish", "flat"])
+    sell_colours: list[str] = Field(default_factory=lambda: ["bullish", "flat"])
+
+
+class FixedCandidate(BaseModel):
+    name: str
+    data: str
+    split_date: str = "2025-06-01"
+    strategy_config: str = "configs/strategies/two_candle_rejection.yaml"
+    variant: FixedCandidateVariant = Field(default_factory=FixedCandidateVariant)
+
+
+class FixedCandidatesConfig(BaseModel):
+    output_root: str = "data/results/fixed_candidates"
+    strategy_config: str = "configs/strategies/two_candle_rejection.yaml"
+    prop_firm_config: str = "configs/prop_firm.yaml"
+    candidates: list[FixedCandidate] = Field(default_factory=list)
+
+
+class PortfolioDefinition(BaseModel):
+    name: str
+    trades: list[str] = Field(default_factory=list)
+
+
+class PortfolioCandidatesConfig(BaseModel):
+    dedupe_same_signal: bool = True
+    output_root: str = "data/results/portfolio_sim"
+    portfolios: list[PortfolioDefinition] = Field(default_factory=list)
+
+
 def load_yaml(path: str | Path) -> dict[str, Any]:
     """Load a YAML file and return a dict."""
     with open(path, encoding="utf-8") as f:
@@ -271,11 +312,25 @@ def load_research_config(path: str | Path, base: Path | None = None) -> Research
     return ResearchConfig.model_validate(data)
 
 
+def load_fixed_candidates_config(path: str | Path, base: Path | None = None) -> FixedCandidatesConfig:
+    """Load fixed candidate batch config."""
+    resolved = resolve_path(path, base)
+    data = load_yaml(resolved)
+    return FixedCandidatesConfig.model_validate(data)
+
+
 def load_prop_firm_config(path: str | Path, base: Path | None = None) -> PropFirmConfig:
     """Load and validate prop firm simulator YAML config."""
     resolved = resolve_path(path, base)
     data = load_yaml(resolved)
     return PropFirmConfig.model_validate(data)
+
+
+def load_portfolio_candidates_config(path: str | Path, base: Path | None = None) -> PortfolioCandidatesConfig:
+    """Load portfolio simulation config."""
+    resolved = resolve_path(path, base)
+    data = load_yaml(resolved)
+    return PortfolioCandidatesConfig.model_validate(data)
 
 
 def load_symbols_config(path: str | Path, base: Path | None = None) -> SymbolsConfig:

@@ -14,6 +14,8 @@ from rich.table import Table
 from auta_research.config import (
     find_project_root,
     get_point_size,
+    load_fixed_candidates_config,
+    load_portfolio_candidates_config,
     load_prop_firm_config,
     load_research_config,
     load_strategy_config,
@@ -27,14 +29,31 @@ from auta_research.patterns import detect_patterns
 from auta_research.reports import generate_report
 from auta_research.prop_sim import discover_trade_splits, run_prop_simulation
 from auta_research.prop_reports import generate_prop_sim_report
-from auta_research.plotting import generate_prop_charts
+from auta_research.plotting import generate_prop_charts, generate_portfolio_charts
 from auta_research.validation import validate
+from auta_research.fixed_candidates import backtest_fixed, validate_fixed, run_fixed_batch
+from auta_research.variants import parse_variant_json
+from auta_research.portfolio_sim import run_portfolio_simulation
+from auta_research.portfolio_reports import generate_portfolio_sim_report
 
 console = Console()
 
 
+def _resolve_path(root: Path, path: str) -> Path:
+    p = Path(path)
+    return p if p.is_absolute() else root / p
+
+
 def _project_root() -> Path:
     return find_project_root()
+
+
+def _prop_sim_output_dir(trades_path: Path, root: Path) -> Path:
+    """Use candidate prop_sim dir when trades live under a fixed-candidate folder."""
+    parent = trades_path.parent
+    if (parent / "variant.json").exists() or (parent / "summary_test.json").exists():
+        return parent / "prop_sim"
+    return root / "data" / "results" / "prop_sim"
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
@@ -165,12 +184,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_prop_sim(args: argparse.Namespace) -> int:
     """Run prop-firm evaluation simulator on trade log(s)."""
     root = _project_root()
-    trades_path = Path(args.trades)
-    if not trades_path.is_absolute():
-        trades_path = root / trades_path
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = root / config_path
+    trades_path = _resolve_path(root, args.trades)
+    config_path = _resolve_path(root, args.config)
 
     cfg = load_prop_firm_config(config_path, root)
     sources = discover_trade_splits(trades_path, root)
@@ -178,7 +193,7 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
     for name, path in sources:
         console.print(f"  - {name}: {path}")
 
-    out_dir = root / "data" / "results" / "prop_sim"
+    out_dir = _prop_sim_output_dir(trades_path, root)
     assets_dir = root / "reports" / "assets"
     reports_dir = root / "reports"
 
@@ -192,6 +207,7 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
     table.add_column("Status")
     table.add_column("Pass MC")
     table.add_column("Verdict")
+    table.add_column("Reason")
     for _, row in summary.head(15).iterrows():
         table.add_row(
             str(row.get("trade_split", "")),
@@ -199,6 +215,7 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
             str(row.get("status", "")),
             f"{row.get('mc_pass_rate', 0):.1%}" if pd.notna(row.get("mc_pass_rate")) else "-",
             str(row.get("verdict", "")),
+            str(row.get("rejection_reason", "") or ""),
         )
     console.print(table)
     console.print(f"[green]Summary:[/green] {out_dir / 'prop_sim_summary.csv'}")
@@ -206,6 +223,145 @@ def cmd_prop_sim(args: argparse.Namespace) -> int:
         console.print(f"[green]Monte Carlo:[/green] {out_dir / 'prop_sim_monte_carlo.csv'}")
     console.print(f"[green]Report:[/green] {report_path}")
     console.print(f"Recommended max risk: {meta.get('recommended_max_risk_pct')}%")
+    return 0
+
+
+def cmd_portfolio_sim(args: argparse.Namespace) -> int:
+    """Run portfolio prop-firm simulation across merged candidate trade logs."""
+    root = _project_root()
+    portfolio_cfg = load_portfolio_candidates_config(_resolve_path(root, args.config), root)
+    prop_cfg = load_prop_firm_config(_resolve_path(root, args.prop_config), root)
+
+    if args.prop_mc_runs is not None:
+        prop_cfg.monte_carlo.runs = args.prop_mc_runs
+
+    console.print(
+        f"[bold]Portfolio simulation[/bold] ({len(portfolio_cfg.portfolios)} portfolios, "
+        f"MC runs={prop_cfg.monte_carlo.runs})"
+    )
+    for p in portfolio_cfg.portfolios:
+        console.print(f"  - {p.name}: {len(p.trades)} trade log(s)")
+
+    out_dir = root / portfolio_cfg.output_root
+    assets_dir = root / "reports" / "assets"
+    reports_dir = root / "reports"
+
+    summary, mc, meta = run_portfolio_simulation(portfolio_cfg, prop_cfg, root)
+    generate_portfolio_charts(meta, assets_dir)
+    report_path = generate_portfolio_sim_report(summary, mc, meta, prop_cfg, reports_dir, assets_dir)
+
+    table = Table(title="Portfolio Simulation Summary")
+    table.add_column("Portfolio")
+    table.add_column("Risk %")
+    table.add_column("Status")
+    table.add_column("Pass MC")
+    table.add_column("Verdict")
+    table.add_column("Reason")
+    for _, row in summary.iterrows():
+        table.add_row(
+            str(row.get("portfolio_name", row.get("trade_split", ""))),
+            str(row.get("risk_per_trade_pct", "")),
+            str(row.get("status", "")),
+            f"{row.get('mc_pass_rate', 0):.1%}" if pd.notna(row.get("mc_pass_rate")) else "-",
+            str(row.get("verdict", "")),
+            str(row.get("rejection_reason", "") or ""),
+        )
+    console.print(table)
+    console.print(f"[green]Summary:[/green] {out_dir / 'portfolio_summary.csv'}")
+    if not mc.empty:
+        console.print(f"[green]Monte Carlo:[/green] {out_dir / 'portfolio_monte_carlo.csv'}")
+    console.print(f"[green]Report:[/green] {report_path}")
+    console.print(f"Recommended max risk: {meta.get('recommended_max_risk_pct')}%")
+    return 0
+
+
+def cmd_backtest_fixed(args: argparse.Namespace) -> int:
+    """Run a single fixed strategy variant backtest."""
+    root = _project_root()
+    data_path = _resolve_path(root, args.data)
+    output_dir = _resolve_path(root, args.output_dir)
+    cfg = load_strategy_config(args.strategy_config, root)
+    variant = parse_variant_json(args.variant_json)
+
+    summary = backtest_fixed(
+        data_path,
+        variant,
+        output_dir,
+        cfg,
+        write_latest=args.write_latest,
+        latest_dir=root / "data" / "results" / "latest" if args.write_latest else None,
+    )
+    metrics = summary.get("metrics", {})
+    console.print(f"[green]Backtest fixed[/green] -> {output_dir}")
+    console.print(
+        f"Trades: {metrics.get('trades', 0)} | "
+        f"Expectancy: {metrics.get('expectancy_r', 0):.3f}R | "
+        f"Win rate: {metrics.get('win_rate', 0):.1%}"
+    )
+    return 0
+
+
+def cmd_validate_fixed(args: argparse.Namespace) -> int:
+    """Validate a single fixed strategy variant with train/test split."""
+    root = _project_root()
+    data_path = _resolve_path(root, args.data)
+    output_dir = _resolve_path(root, args.output_dir)
+    cfg = load_strategy_config(args.strategy_config, root)
+    variant = parse_variant_json(args.variant_json)
+
+    summary = validate_fixed(
+        data_path,
+        variant,
+        args.split_date,
+        output_dir,
+        cfg,
+    )
+    train_m = summary.get("train_metrics", {})
+    test_m = summary.get("test_metrics", {})
+    console.print(f"[green]Validate fixed[/green] -> {output_dir}")
+    console.print(
+        f"Train: {train_m.get('expectancy_r', 0):.3f}R @ {train_m.get('win_rate', 0):.1%} WR | "
+        f"Test: {test_m.get('expectancy_r', 0):.3f}R @ {test_m.get('win_rate', 0):.1%} WR"
+    )
+    console.print(
+        f"Degradation: {summary.get('degradation_pct', 0):.1f}% | "
+        f"OOS positive: {'yes' if summary.get('oos_positive') else 'no'}"
+    )
+    console.print(f"Report: {output_dir / 'validation_summary.md'}")
+    return 0
+
+
+def cmd_validate_fixed_batch(args: argparse.Namespace) -> int:
+    """Run validate-fixed for all candidates in a batch config."""
+    root = _project_root()
+    batch_cfg = load_fixed_candidates_config(_resolve_path(root, args.config), root)
+
+    console.print(f"[bold]Fixed candidate batch[/bold] ({len(batch_cfg.candidates)} candidates)")
+    mc_runs = args.prop_mc_runs
+    results, report_path = run_fixed_batch(
+        batch_cfg,
+        root,
+        run_prop=not args.skip_prop_sim,
+        prop_mc_runs=mc_runs,
+    )
+
+    table = Table(title="Fixed Candidate Results")
+    table.add_column("Candidate")
+    table.add_column("Train Exp")
+    table.add_column("Test Exp")
+    table.add_column("OOS+")
+    for row in results:
+        train_m = row.get("train_metrics", {})
+        test_m = row.get("test_metrics", {})
+        table.add_row(
+            str(row.get("name", "")),
+            f"{train_m.get('expectancy_r', 0):.3f}R",
+            f"{test_m.get('expectancy_r', 0):.3f}R",
+            "yes" if row.get("oos_positive") else "no",
+        )
+    console.print(table)
+    if report_path:
+        console.print(f"[green]Comparison report:[/green] {report_path}")
     return 0
 
 
@@ -266,6 +422,56 @@ def build_parser() -> argparse.ArgumentParser:
     prop.add_argument("--trades", required=True, help="Trade log CSV path")
     prop.add_argument("--config", default="configs/prop_firm.yaml", help="Prop firm config YAML")
     prop.set_defaults(func=cmd_prop_sim)
+
+    btf = sub.add_parser("backtest-fixed", help="Backtest one fixed strategy variant")
+    btf.add_argument("--data", required=True, help="Input CSV data file")
+    btf.add_argument("--variant-json", required=True, help="Variant parameters as JSON")
+    btf.add_argument("--output-dir", required=True, help="Output directory for trades.csv and summary.json")
+    btf.add_argument(
+        "--strategy-config",
+        default="configs/strategies/two_candle_rejection.yaml",
+        help="Base strategy config YAML",
+    )
+    btf.add_argument(
+        "--write-latest",
+        action="store_true",
+        help="Also write trades to data/results/latest (off by default)",
+    )
+    btf.set_defaults(func=cmd_backtest_fixed)
+
+    vf = sub.add_parser("validate-fixed", help="Train/test validate one fixed variant")
+    vf.add_argument("--data", required=True, help="Input CSV data file")
+    vf.add_argument("--variant-json", required=True, help="Variant parameters as JSON")
+    vf.add_argument("--split-date", required=True, help="Split date YYYY-MM-DD (test on/after)")
+    vf.add_argument("--output-dir", required=True, help="Output directory for validation artifacts")
+    vf.add_argument(
+        "--strategy-config",
+        default="configs/strategies/two_candle_rejection.yaml",
+        help="Base strategy config YAML",
+    )
+    vf.set_defaults(func=cmd_validate_fixed)
+
+    vfb = sub.add_parser("validate-fixed-batch", help="Validate all fixed candidates from config")
+    vfb.add_argument("--config", default="configs/fixed_candidates.yaml", help="Fixed candidates YAML")
+    vfb.add_argument("--skip-prop-sim", action="store_true", help="Skip prop-sim per candidate")
+    vfb.add_argument(
+        "--prop-mc-runs",
+        type=int,
+        default=None,
+        help="Override Monte Carlo runs per risk level (default: prop_firm.yaml value)",
+    )
+    vfb.set_defaults(func=cmd_validate_fixed_batch)
+
+    psim = sub.add_parser("portfolio-sim", help="Portfolio prop-firm simulation")
+    psim.add_argument("--config", default="configs/portfolio_candidates.yaml", help="Portfolio config YAML")
+    psim.add_argument("--prop-config", default="configs/prop_firm.yaml", help="Prop firm config YAML")
+    psim.add_argument(
+        "--prop-mc-runs",
+        type=int,
+        default=None,
+        help="Override Monte Carlo runs per risk level",
+    )
+    psim.set_defaults(func=cmd_portfolio_sim)
 
     return parser
 

@@ -20,6 +20,7 @@ from auta_research.filters import annotate_signal_filters
 from auta_research.indicators import enrich_indicators
 from auta_research.metrics import compute_metrics, penalised_score
 from auta_research.patterns import detect_patterns, pattern_cache_key
+from auta_research.variants import apply_variant as _apply_variant
 
 console = Console()
 
@@ -93,28 +94,7 @@ def _grid_variants(research: ResearchConfig, base: StrategyConfig) -> Iterator[d
             count += 1
 
 
-def _apply_variant(base: StrategyConfig, variant: dict[str, Any]) -> StrategyConfig:
-    """Apply optimisation variant to strategy config."""
-    cfg = copy.deepcopy(base)
-    cfg.pattern.wick_ratio_min = variant["wick_ratio_min"]
-    cfg.pattern.body_ratio_min = variant["body_ratio_min"]
-    cfg.pattern.require_body_engulf = variant["require_body_engulf"]
-    cfg.pattern.allow_candle1_colours["buy"] = variant["buy_colours"]
-    cfg.pattern.allow_candle1_colours["sell"] = variant["sell_colours"]
-    cfg.entry.modes = [variant["entry_mode"]]
-    cfg.stop.modes = [variant["stop_mode"]]
-    cfg.take_profit.r_values = [variant["tp_r_value"]]
-    cfg.stop.atr_buffer_values = [variant["atr_buffer"]]
-
-    trend = variant["trend_filter"]
-    cfg.filters.trend.enabled = trend != "none"
-    cfg.filters.trend.modes = [trend] if trend != "none" else ["none"]
-    cfg.filters.volatility.enabled = variant["volatility_filter"]
-    cfg.filters.session.enabled = variant["session_filter"]
-    return cfg
-
-
-def _variant_row(
+def _build_result_row(
     symbol: str,
     tf: str,
     path: Path,

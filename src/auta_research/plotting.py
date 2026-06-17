@@ -153,6 +153,21 @@ def generate_prop_charts(meta: dict, assets_dir: Path) -> dict[str, str]:
     return {"prop_equity_curve": str(equity_path), "prop_monte_carlo_distribution": str(mc_path)}
 
 
+def generate_portfolio_charts(meta: dict, assets_dir: Path) -> dict[str, str]:
+    """Generate portfolio simulation charts."""
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    equity_path = assets_dir / "portfolio_equity_curve.png"
+    mc_path = assets_dir / "portfolio_monte_carlo_distribution.png"
+    curves = meta.get("equity_curves", {})
+    filtered = {k: v for k, v in list(curves.items())[:8]}
+    plot_prop_equity_curve(filtered, equity_path)
+    plot_prop_monte_carlo_distribution(meta.get("mc_return_samples", {}), mc_path)
+    return {
+        "portfolio_equity_curve": str(equity_path),
+        "portfolio_monte_carlo_distribution": str(mc_path),
+    }
+
+
 def generate_all_charts(trades: pd.DataFrame, assets_dir: Path) -> dict[str, str]:
     """Generate all report charts."""
     charts = {

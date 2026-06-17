@@ -50,7 +50,7 @@ def generate_prop_sim_report(
         cols = [
             "trade_split", "risk_per_trade_pct", "status", "passed",
             "final_return_pct", "max_drawdown_pct", "max_daily_loss_pct",
-            "win_rate", "average_r", "total_trades_taken", "verdict",
+            "win_rate", "average_r", "total_trades_taken", "verdict", "rejection_reason",
         ]
         show = [c for c in cols if c in summary.columns]
         lines.append("| " + " | ".join(show) + " |")
@@ -68,7 +68,8 @@ def generate_prop_sim_report(
     if not mc.empty:
         cols = [
             "trade_split", "risk_per_trade_pct", "pass_rate", "fail_rate",
-            "daily_fail_rate", "total_fail_rate", "median_final_return_pct",
+            "daily_fail_rate", "total_fail_rate", "incomplete_rate",
+            "median_final_return_pct",
             "p5_final_return_pct", "p95_final_return_pct", "worst_drawdown_pct",
             "recommended",
         ]
