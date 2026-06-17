@@ -118,11 +118,18 @@ auta-research report --results data/results/latest
 | Reports | `reports/` |
 | Charts | `reports/assets/` |
 
-## Tests
+## Prop-Firm Simulation
+
+Evaluate whether a strategy can pass funded-account rules (research only):
 
 ```bash
-uv run pytest tests/ -v
+auta-research prop-sim --trades data/results/latest/trades.csv --config configs/prop_firm.yaml
 ```
+
+Automatically includes `data/results/validate_fixed/trades_train.csv` and `trades_test.csv` when present.
+
+Outputs: `data/results/prop_sim/`, `reports/prop_sim_report_*.md`, and charts under `reports/assets/`.
+
 
 ## Confidence Rules
 
