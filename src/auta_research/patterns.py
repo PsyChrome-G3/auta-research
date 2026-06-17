@@ -15,6 +15,24 @@ from auta_research.candle_math import (
 )
 from auta_research.config import StrategyConfig
 from auta_research.filters import apply_filters, score_signal
+from auta_research.indicators import enrich_indicators
+
+
+def pattern_cache_key(cfg: StrategyConfig) -> tuple[Any, ...]:
+    """Hashable key for pattern-only detection cache."""
+    pat = cfg.pattern
+    return (
+        pat.wick_ratio_min,
+        pat.body_ratio_min,
+        pat.require_body_engulf,
+        tuple(pat.allow_candle1_colours.get("buy", [])),
+        tuple(pat.allow_candle1_colours.get("sell", [])),
+        pat.require_candle2_colour.get("buy"),
+        pat.require_candle2_colour.get("sell"),
+        pat.require_second_candle_wick_bias,
+        pat.min_body_to_range_ratio,
+        pat.max_body_to_range_ratio_for_flat,
+    )
 
 
 def _check_direction(
@@ -79,32 +97,69 @@ def _check_direction(
     return True, reasons
 
 
-def detect_patterns(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
+_SIGNAL_COLUMNS = [
+    "signal_time", "symbol", "timeframe", "direction", "signal_bar_index",
+    "candle1_time", "candle2_time",
+    "candle1_open", "candle1_high", "candle1_low", "candle1_close",
+    "candle2_open", "candle2_high", "candle2_low", "candle2_close",
+    "candle1_body", "candle2_body",
+    "candle1_upper_wick", "candle1_lower_wick",
+    "candle2_upper_wick", "candle2_lower_wick",
+    "candle1_wick_ratio", "candle2_wick_ratio", "body_ratio",
+    "signal_score", "passed_filters", "failed_filters",
+]
+
+
+def detect_patterns(
+    df: pd.DataFrame,
+    cfg: StrategyConfig,
+    *,
+    pattern_only: bool = False,
+    enriched_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Detect all buy and sell two-candle rejection patterns."""
     flat_threshold = cfg.pattern.max_body_to_range_ratio_for_flat
-    enriched = enrich_candles(df, flat_threshold=flat_threshold)
+    work = enrich_candles(df, flat_threshold=flat_threshold)
+    if enriched_df is None:
+        enriched_df = enrich_indicators(
+            work,
+            atr_period=cfg.stop.atr_period,
+            swing_lookback=cfg.filters.location.swing_lookback,
+        )
+    else:
+        enriched_df = enriched_df
+
+    symbol = df["symbol"].iloc[0] if "symbol" in df.columns and len(df) else ""
+    timeframe = df["timeframe"].iloc[0] if "timeframe" in df.columns and len(df) else ""
 
     records: list[dict[str, Any]] = []
-    for i in range(1, len(enriched)):
-        c1 = enriched.iloc[i - 1]
-        c2 = enriched.iloc[i]
-        signal_idx = i
+    n = len(work)
+    for i in range(1, n):
+        c1 = work.iloc[i - 1]
+        c2 = work.iloc[i]
 
         for direction in ("buy", "sell"):
             matched, meta = _check_direction(direction, c1, c2, cfg)
             if not matched:
                 continue
 
-            passed, failed = apply_filters(enriched, signal_idx, direction, cfg)
-            score = score_signal(meta, enriched.iloc[signal_idx], direction, cfg, passed)
+            if pattern_only:
+                passed: list[str] = []
+                failed: list[str] = []
+                score = min(meta["body_ratio"] / cfg.pattern.body_ratio_min, 3.0) / 3.0 * 50
+            else:
+                passed, failed = apply_filters(
+                    enriched_df, i, direction, cfg, enriched_df=enriched_df
+                )
+                score = score_signal(meta, enriched_df.iloc[i], direction, cfg, passed)
 
             records.append(
                 {
                     "signal_time": c2.get("timestamp", c2.name),
-                    "symbol": df["symbol"].iloc[0] if "symbol" in df.columns else "",
-                    "timeframe": df["timeframe"].iloc[0] if "timeframe" in df.columns else "",
+                    "symbol": symbol,
+                    "timeframe": timeframe,
                     "direction": direction,
-                    "signal_bar_index": signal_idx,
+                    "signal_bar_index": i,
                     "candle1_time": c1.get("timestamp", c1.name),
                     "candle2_time": c2.get("timestamp", c2.name),
                     "candle1_open": c1["open"],
@@ -124,24 +179,12 @@ def detect_patterns(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
                     "candle1_wick_ratio": meta["candle1_wick_ratio"],
                     "candle2_wick_ratio": meta["candle2_wick_ratio"],
                     "body_ratio": meta["body_ratio"],
-                    "signal_score": score,
+                    "signal_score": round(score, 2),
                     "passed_filters": ",".join(passed) if passed else "",
                     "failed_filters": ",".join(failed) if failed else "",
                 }
             )
 
     if not records:
-        return pd.DataFrame(
-            columns=[
-                "signal_time", "symbol", "timeframe", "direction", "signal_bar_index",
-                "candle1_time", "candle2_time",
-                "candle1_open", "candle1_high", "candle1_low", "candle1_close",
-                "candle2_open", "candle2_high", "candle2_low", "candle2_close",
-                "candle1_body", "candle2_body",
-                "candle1_upper_wick", "candle1_lower_wick",
-                "candle2_upper_wick", "candle2_lower_wick",
-                "candle1_wick_ratio", "candle2_wick_ratio", "body_ratio",
-                "signal_score", "passed_filters", "failed_filters",
-            ]
-        )
+        return pd.DataFrame(columns=_SIGNAL_COLUMNS)
     return pd.DataFrame(records)

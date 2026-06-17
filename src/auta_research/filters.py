@@ -151,14 +151,13 @@ def apply_filters(
     signal_idx: int,
     direction: str,
     cfg: StrategyConfig,
+    enriched_df: pd.DataFrame | None = None,
 ) -> tuple[list[str], list[str]]:
     """Apply all enabled filters; return passed and failed filter names."""
-    vf = cfg.filters.volatility
-    lf = cfg.filters.location
-    work = enrich_indicators(
+    work = enriched_df if enriched_df is not None else enrich_indicators(
         df,
         atr_period=cfg.stop.atr_period,
-        swing_lookback=lf.swing_lookback,
+        swing_lookback=cfg.filters.location.swing_lookback,
     )
     row = work.iloc[signal_idx]
     passed: list[str] = []
@@ -201,6 +200,41 @@ def apply_filters(
             failed.append(name)
 
     return passed, failed
+
+
+def annotate_signal_filters(
+    signals: pd.DataFrame,
+    enriched_df: pd.DataFrame,
+    cfg: StrategyConfig,
+) -> pd.DataFrame:
+    """Apply filter rules to detected signals (fast: loops signals only)."""
+    if signals.empty:
+        return signals
+    out = signals.copy()
+    passed_col: list[str] = []
+    failed_col: list[str] = []
+    scores: list[float] = []
+    for _, sig in out.iterrows():
+        idx = int(sig["signal_bar_index"])
+        direction = str(sig["direction"])
+        passed, failed = apply_filters(
+            enriched_df, idx, direction, cfg, enriched_df=enriched_df
+        )
+        passed_col.append(",".join(passed))
+        failed_col.append(",".join(failed))
+        meta = {
+            "candle1_wick_ratio": sig["candle1_wick_ratio"],
+            "candle2_wick_ratio": sig["candle2_wick_ratio"],
+            "body_ratio": sig["body_ratio"],
+            "body_engulf": False,
+        }
+        scores.append(
+            score_signal(meta, enriched_df.iloc[idx], direction, cfg, passed)
+        )
+    out["passed_filters"] = passed_col
+    out["failed_filters"] = failed_col
+    out["signal_score"] = scores
+    return out
 
 
 def filters_pass(signal_row: pd.Series, cfg: StrategyConfig) -> bool:

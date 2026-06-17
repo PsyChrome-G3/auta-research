@@ -20,6 +20,8 @@ def _load_results(results_dir: Path) -> dict[str, Any]:
     if trades_path.exists():
         data["trades"] = pd.read_csv(trades_path)
     opt_path = results_dir / "optimisation_results.csv"
+    if not opt_path.exists():
+        opt_path = results_dir.parent / "optimisation" / "optimisation_results.csv"
     if opt_path.exists():
         data["optimisation"] = pd.read_csv(opt_path)
     val_path = results_dir / "validation_results.json"
@@ -39,6 +41,39 @@ def _table_rows(df: pd.DataFrame, group_col: str, value_col: str = "r_result") -
         exp = grp[value_col].mean()
         rows.append(f"| {key} | {wr:.2%} | {exp:.3f} |")
     return "\n".join(rows) if rows else "| (no data) | - | - |\n"
+
+
+def _opt_tp_summary(opt: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate optimisation rows by tp_r_value (trade-weighted)."""
+    if opt.empty or "tp_r_value" not in opt.columns:
+        return pd.DataFrame()
+    rows: list[dict[str, Any]] = []
+    for tp, grp in opt.groupby("tp_r_value"):
+        weights = grp["trades"].fillna(0).clip(lower=0)
+        total_trades = int(weights.sum())
+        if total_trades > 0:
+            win_rate = float((grp["win_rate"] * weights).sum() / weights.sum())
+            expectancy = float((grp["expectancy_r"] * weights).sum() / weights.sum())
+        else:
+            win_rate = float(grp["win_rate"].mean())
+            expectancy = float(grp["expectancy_r"].mean())
+        rows.append({
+            "tp_r_value": float(tp),
+            "win_rate": win_rate,
+            "expectancy_r": expectancy,
+            "variant_rows": len(grp),
+            "total_trades": total_trades,
+        })
+    return pd.DataFrame(rows).sort_values("tp_r_value").reset_index(drop=True)
+
+
+def _best_variant_per_tp(opt: pd.DataFrame) -> pd.DataFrame:
+    """Best rank_score row for each tp_r_value."""
+    if opt.empty or "tp_r_value" not in opt.columns or "rank_score" not in opt.columns:
+        return pd.DataFrame()
+    idx = opt.groupby("tp_r_value")["rank_score"].idxmax()
+    best = opt.loc[idx].sort_values("tp_r_value").reset_index(drop=True)
+    return best
 
 
 def generate_report(results_dir: Path, output_dir: Path, assets_dir: Path) -> Path:
@@ -123,6 +158,13 @@ def generate_report(results_dir: Path, output_dir: Path, assets_dir: Path) -> Pa
                 f"| {rv}R | {(grp['r_result'] > 0).mean():.2%} | "
                 f"{grp['r_result'].mean():.3f} | {len(grp)} |"
             )
+    elif not opt.empty and "tp_r_value" in opt.columns:
+        tp_summary = _opt_tp_summary(opt)
+        for _, row in tp_summary.iterrows():
+            lines.append(
+                f"| {row['tp_r_value']}R | {row['win_rate']:.2%} | "
+                f"{row['expectancy_r']:.3f} | {int(row['total_trades'])} |"
+            )
     else:
         lines.append("| - | - | - | - |")
 
@@ -140,6 +182,23 @@ def generate_report(results_dir: Path, output_dir: Path, assets_dir: Path) -> Pa
                 sub = trades[trades["r_multiple_target"] == comp]["r_result"].mean() if comp in trades["r_multiple_target"].values else None
                 if sub is not None:
                     lines.append(f"- 1R vs {comp}R: {r1:.3f} vs {sub:.3f}")
+    elif not opt.empty and "tp_r_value" in opt.columns:
+        tp_summary = _opt_tp_summary(opt)
+        if not tp_summary.empty:
+            best_row = tp_summary.loc[tp_summary["expectancy_r"].idxmax()]
+            lines.append(
+                f"Best TP multiple by optimisation expectancy: **{best_row['tp_r_value']}R** "
+                f"(win rate {best_row['win_rate']:.2%}, expectancy {best_row['expectancy_r']:.3f})"
+            )
+            lines.append("")
+            lines.append("| TP (R) | Win Rate | Expectancy | Variant Rows | Total Trades |")
+            lines.append("|--------|----------|------------|--------------|--------------|")
+            for _, row in tp_summary.iterrows():
+                lines.append(
+                    f"| {row['tp_r_value']} | {row['win_rate']:.2%} | "
+                    f"{row['expectancy_r']:.3f} | {int(row['variant_rows'])} | "
+                    f"{int(row['total_trades'])} |"
+                )
     lines.append("")
 
     lines.extend([
@@ -152,22 +211,49 @@ def generate_report(results_dir: Path, output_dir: Path, assets_dir: Path) -> Pa
     ])
 
     if not opt.empty:
-        lines.append("### Top 5 Variants")
+        lines.append("### Top 5 Variants (overall rank_score)")
         lines.append("")
-        lines.append("| Rank | Symbol | TF | Trades | Win Rate | Expectancy | Confidence |")
-        lines.append("|------|--------|----|--------|----------|------------|------------|")
+        lines.append(
+            "| Rank | Symbol | TF | TP | Entry | Stop | Trades | Win Rate | Expectancy |"
+        )
+        lines.append(
+            "|------|--------|----|----|-------|------|--------|----------|------------|"
+        )
         for _, row in opt.head(5).iterrows():
             lines.append(
                 f"| {row.get('rank', '')} | {row.get('symbol', '')} | {row.get('timeframe', '')} | "
-                f"{row.get('trades', 0)} | {row.get('win_rate', 0):.2%} | "
-                f"{row.get('expectancy_r', 0):.3f} | {row.get('confidence', '')} |"
+                f"{row.get('tp_r_value', '')}R | {row.get('entry_mode', '')} | "
+                f"{row.get('stop_mode', '')} | {row.get('trades', 0)} | "
+                f"{row.get('win_rate', 0):.2%} | {row.get('expectancy_r', 0):.3f} |"
             )
         lines.append("")
+
+        best_per_tp = _best_variant_per_tp(opt)
+        if not best_per_tp.empty:
+            lines.append("### Best Variant per TP Multiple (ranked by tp_r_value)")
+            lines.append("")
+            lines.append(
+                "| TP | Symbol | TF | Entry | Stop | Trades | Win Rate | Expectancy | Rank Score |"
+            )
+            lines.append(
+                "|----|--------|----|-------|------|--------|----------|------------|------------|"
+            )
+            for _, row in best_per_tp.iterrows():
+                lines.append(
+                    f"| {row.get('tp_r_value', '')}R | {row.get('symbol', '')} | "
+                    f"{row.get('timeframe', '')} | {row.get('entry_mode', '')} | "
+                    f"{row.get('stop_mode', '')} | {row.get('trades', 0)} | "
+                    f"{row.get('win_rate', 0):.2%} | {row.get('expectancy_r', 0):.3f} | "
+                    f"{row.get('rank_score', 0):.3f} |"
+                )
+            lines.append("")
+
         lines.append("### Worst 5 Variants")
         lines.append("")
         for _, row in opt.tail(5).iterrows():
             lines.append(
-                f"- {row.get('symbol')} {row.get('timeframe')}: "
+                f"- {row.get('symbol')} {row.get('timeframe')} "
+                f"{row.get('tp_r_value', '')}R {row.get('entry_mode', '')}: "
                 f"expectancy {row.get('expectancy_r', 0):.3f}, trades {row.get('trades', 0)}"
             )
     else:
