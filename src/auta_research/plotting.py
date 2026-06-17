@@ -99,6 +99,60 @@ def plot_trade_count_by_symbol(trades: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_prop_equity_curve(equity_curves: dict[str, list[float]], out_path: Path) -> None:
+    """Plot prop-firm balance equity curves for selected risk levels."""
+    if not equity_curves:
+        return
+    _ensure_dir(out_path.parent)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for label, curve in equity_curves.items():
+        if curve:
+            ax.plot(curve, label=label, alpha=0.8)
+    ax.set_title("Prop-Firm Account Equity")
+    ax.set_xlabel("Trade #")
+    ax.set_ylabel("Balance")
+    ax.legend(fontsize=7, loc="best")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def plot_prop_monte_carlo_distribution(
+    return_samples: dict[str, list[float]],
+    out_path: Path,
+) -> None:
+    """Histogram of Monte Carlo final returns."""
+    if not return_samples:
+        return
+    _ensure_dir(out_path.parent)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for label, samples in return_samples.items():
+        if samples:
+            ax.hist(samples, bins=30, alpha=0.5, label=label)
+    ax.set_title("Monte Carlo Final Return Distribution (%)")
+    ax.set_xlabel("Final return %")
+    ax.set_ylabel("Frequency")
+    ax.legend(fontsize=7)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def generate_prop_charts(meta: dict, assets_dir: Path) -> dict[str, str]:
+    """Generate prop simulation charts."""
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    equity_path = assets_dir / "prop_equity_curve.png"
+    mc_path = assets_dir / "prop_monte_carlo_distribution.png"
+    curves = meta.get("equity_curves", {})
+    # Limit chart lines for readability
+    filtered = {k: v for k, v in list(curves.items())[:6]}
+    plot_prop_equity_curve(filtered, equity_path)
+    plot_prop_monte_carlo_distribution(meta.get("mc_return_samples", {}), mc_path)
+    return {"prop_equity_curve": str(equity_path), "prop_monte_carlo_distribution": str(mc_path)}
+
+
 def generate_all_charts(trades: pd.DataFrame, assets_dir: Path) -> dict[str, str]:
     """Generate all report charts."""
     charts = {

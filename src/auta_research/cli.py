@@ -7,10 +7,17 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-from auta_research.config import find_project_root, get_point_size, load_research_config, load_strategy_config
+from auta_research.config import (
+    find_project_root,
+    get_point_size,
+    load_prop_firm_config,
+    load_research_config,
+    load_strategy_config,
+)
 from auta_research.data_store import load_csv, save_csv
 from auta_research.backtester import run_backtest
 from auta_research.metrics import compute_metrics
@@ -18,6 +25,9 @@ from auta_research.mt5_connector import check_mt5, pull_and_save
 from auta_research.optimiser import optimise
 from auta_research.patterns import detect_patterns
 from auta_research.reports import generate_report
+from auta_research.prop_sim import discover_trade_splits, run_prop_simulation
+from auta_research.prop_reports import generate_prop_sim_report
+from auta_research.plotting import generate_prop_charts
 from auta_research.validation import validate
 
 console = Console()
@@ -40,9 +50,20 @@ def cmd_pull(args: argparse.Namespace) -> int:
         return 1
 
     console.print(f"Pulling {len(symbols)} symbols x {len(timeframes)} timeframes...")
-    saved = pull_and_save(symbols, timeframes, args.date_from, args.date_to, str(out_dir))
+    saved, errors = pull_and_save(symbols, timeframes, args.date_from, args.date_to, str(out_dir))
     for p in saved:
-        console.print(f"[green]Saved:[/green] {p}")
+        console.print(f"[green]Saved:[/green] {p} ({Path(p).stat().st_size // 1024} KB)")
+    if errors:
+        console.print(f"\n[yellow]Failed ({len(errors)}):[/yellow]")
+        for err in errors[:20]:
+            console.print(f"  - {err}")
+        if len(errors) > 20:
+            console.print(f"  ... and {len(errors) - 20} more")
+    if not saved:
+        console.print("[red]No files saved. See errors above.[/red]")
+        return 1
+    if errors:
+        console.print(f"\n[yellow]Partial success: {len(saved)} saved, {len(errors)} failed.[/yellow]")
     return 0
 
 
@@ -128,9 +149,63 @@ def cmd_validate(args: argparse.Namespace) -> int:
     root = _project_root()
     research = load_research_config(args.research_config, root)
     summary = validate(research, root)
-    console.print(f"[green]Validation complete: {summary.get('folds', 0)} folds[/green]")
-    console.print(f"Stability: {summary.get('stability_score')}")
+    folds = summary.get("folds", 0)
+    if folds == 0:
+        console.print("[yellow]No validation folds completed.[/yellow]")
+        return 1
+    agg = summary.get("aggregate_test", {})
+    console.print(f"[green]Validation complete: {folds} folds[/green]")
+    console.print(f"Stability score: {summary.get('stability_score')}")
+    console.print(f"Aggregate test expectancy: {agg.get('expectancy_r', 0):.3f}R")
+    console.print(f"Aggregate test win rate: {agg.get('win_rate', 0):.1%}")
     console.print(f"80% WR supported: {summary.get('win_rate_80_supported')}")
+    return 0
+
+
+def cmd_prop_sim(args: argparse.Namespace) -> int:
+    """Run prop-firm evaluation simulator on trade log(s)."""
+    root = _project_root()
+    trades_path = Path(args.trades)
+    if not trades_path.is_absolute():
+        trades_path = root / trades_path
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = root / config_path
+
+    cfg = load_prop_firm_config(config_path, root)
+    sources = discover_trade_splits(trades_path, root)
+    console.print(f"[bold]Prop simulation[/bold] on {len(sources)} trade log(s):")
+    for name, path in sources:
+        console.print(f"  - {name}: {path}")
+
+    out_dir = root / "data" / "results" / "prop_sim"
+    assets_dir = root / "reports" / "assets"
+    reports_dir = root / "reports"
+
+    summary, mc, meta = run_prop_simulation(cfg, sources, out_dir)
+    charts = generate_prop_charts(meta, assets_dir)
+    report_path = generate_prop_sim_report(summary, mc, meta, cfg, reports_dir, assets_dir)
+
+    table = Table(title="Prop Simulation Summary")
+    table.add_column("Split")
+    table.add_column("Risk %")
+    table.add_column("Status")
+    table.add_column("Pass MC")
+    table.add_column("Verdict")
+    for _, row in summary.head(15).iterrows():
+        table.add_row(
+            str(row.get("trade_split", "")),
+            str(row.get("risk_per_trade_pct", "")),
+            str(row.get("status", "")),
+            f"{row.get('mc_pass_rate', 0):.1%}" if pd.notna(row.get("mc_pass_rate")) else "-",
+            str(row.get("verdict", "")),
+        )
+    console.print(table)
+    console.print(f"[green]Summary:[/green] {out_dir / 'prop_sim_summary.csv'}")
+    if not mc.empty:
+        console.print(f"[green]Monte Carlo:[/green] {out_dir / 'prop_sim_monte_carlo.csv'}")
+    console.print(f"[green]Report:[/green] {report_path}")
+    console.print(f"Recommended max risk: {meta.get('recommended_max_risk_pct')}%")
     return 0
 
 
@@ -186,6 +261,11 @@ def build_parser() -> argparse.ArgumentParser:
     rep = sub.add_parser("report", help="Generate Markdown report")
     rep.add_argument("--results", default="data/results/latest", help="Results directory")
     rep.set_defaults(func=cmd_report)
+
+    prop = sub.add_parser("prop-sim", help="Prop-firm evaluation simulator")
+    prop.add_argument("--trades", required=True, help="Trade log CSV path")
+    prop.add_argument("--config", default="configs/prop_firm.yaml", help="Prop firm config YAML")
+    prop.set_defaults(func=cmd_prop_sim)
 
     return parser
 
